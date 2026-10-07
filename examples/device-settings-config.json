@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "custom_dpi": 1200,
+  "dpi_stage_count": 3,
+  "dpi_index": 1,
+  "sleep": {"sleep": 30}
+}

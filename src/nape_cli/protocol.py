@@ -15,15 +15,31 @@ KC_MISC_CMD_GROUP = 0xA7
 
 
 class NapeCommand(IntEnum):
+    GET_SLEEP = 0x0B
+    SET_SLEEP = 0x0C
     GET_ORIENTATION = 0x20
     GET_DPI = 0x21
     SET_DPI = 0x22
     SET_DPI_VALUE = 0x23
     GET_DPI_VALUE = 0x24
-    GET_PROFILE = 0x2C
+    SET_TAP_HOLD = 0x25
+    GET_TAP_HOLD = 0x26
+    SET_COMBO = 0x27
+    GET_COMBO = 0x28
+    SET_GESTURE = 0x29
+    GET_GESTURE = 0x2A
+    SET_LAYER = 0x2D
+    DELETE_COMBO = 0x2E
+    DELETE_TAP_HOLD = 0x2F
+    SET_FORCE_GESTURE_SCROLL = 0x32
+    GET_FORCE_GESTURE_SCROLL = 0x33
     SET_ORIENTATION = 0x34
+    GET_CUSTOM_DPI = 0x36
+    SET_CUSTOM_DPI = 0x37
     GET_LAYER_ORIENTATION = 0x38
     SET_LAYER_ORIENTATION = 0x39
+    GET_DPI_STAGE_COUNT = 0x3C
+    SET_DPI_STAGE_COUNT = 0x3D
 
 
 def build_request(command: NapeCommand, *arguments: int) -> bytes:

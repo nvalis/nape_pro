@@ -72,6 +72,11 @@ def _parser() -> argparse.ArgumentParser:
     receiver_parser.add_argument("--json", action="store_true", help="include raw reply packets")
     status_parser = commands.add_parser("status", help="read Nape pointer settings and battery")
     status_parser.add_argument("--json", action="store_true", help="include raw reply packets")
+    status_parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help="also read custom DPI, stage count, sleep, gestures, force-scroll, and macros",
+    )
     export_parser = commands.add_parser(
         "export", help="save pointer settings and all nine keymap layers"
     )
@@ -81,7 +86,12 @@ def _parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--advanced",
         action="store_true",
-        help="also read per-layer orientation and the VIA macro buffer (experimental)",
+        help="also read custom DPI, stage count, sleep, gestures, force-scroll, and macros",
+    )
+    export_parser.add_argument(
+        "--layer-orientations",
+        action="store_true",
+        help="query per-layer orientation (unreliable on tested firmware)",
     )
     validate_parser = commands.add_parser(
         "validate", help="validate a partial pointer/keymap JSON config offline"
@@ -190,6 +200,13 @@ def _run(args: argparse.Namespace) -> int:
                 )
             if args.write and changes:
                 print(f"Pre-write snapshot path: {args.backup}", file=output, flush=True)
+                if any(change.field == "macro_buffer" for change in changes):
+                    print(
+                        "Macro replacement resets the entire macro store before transfer; "
+                        "interruption can leave macros empty or invalid. No automatic rollback.",
+                        file=output,
+                        flush=True,
+                    )
             if not changes:
                 print("No changes needed.", file=output, flush=True)
 
@@ -214,11 +231,18 @@ def _run(args: argparse.Namespace) -> int:
             return 0
         current = read_snapshot(
             _select_receiver(args.index),
-            include_keymap=bool(config.layers),
+            include_keymap=bool(config.layers or config.tap_holds or config.combos),
+            include_device_settings=config.requires_device_settings,
             include_layer_orientations=any(
                 layer.orientation is not None for layer in config.layers
             ),
-            include_macro_buffer=config.macro_buffer is not None,
+            include_macro_buffer=config.macro_buffer is not None or config.macros is not None,
+            include_gesture=bool(config.gesture),
+            include_force_gesture_scroll=bool(config.force_gesture_scroll),
+            tap_hold_targets=tuple((entry.layer, entry.button) for entry in config.tap_holds),
+            combo_targets=tuple(entry.index for entry in config.combos),
+            allow_missing_tap_holds=any(entry.create for entry in config.tap_holds),
+            allow_missing_combos=any(entry.create or entry.delete for entry in config.combos),
             timeout_ms=args.timeout_ms,
         )
         changes = plan_changes(config, current)
@@ -257,8 +281,11 @@ def _run(args: argparse.Namespace) -> int:
         result = read_snapshot(
             _select_receiver(args.index),
             include_keymap=args.command == "export",
-            include_layer_orientations=args.command == "export" and args.advanced,
-            include_macro_buffer=args.command == "export" and args.advanced,
+            include_device_settings=args.advanced,
+            include_layer_orientations=args.command == "export" and args.layer_orientations,
+            include_macro_buffer=args.advanced,
+            include_gesture=args.advanced,
+            include_force_gesture_scroll=args.advanced,
             timeout_ms=args.timeout_ms,
         )
         if args.command == "export":
@@ -267,7 +294,9 @@ def _run(args: argparse.Namespace) -> int:
             scope = "pointer settings and "
             scope += f"{result['layer_count']} layers"
             if args.advanced:
-                scope += ", per-layer orientation, and macro buffer"
+                scope += ", custom DPI, DPI stage count, sleep, gesture/scroll settings, and macros"
+            if args.layer_orientations:
+                scope += ", per-layer orientation"
             print(f"Saved {scope} to {args.output}")
         elif args.json:
             print(json.dumps(result, indent=2))
@@ -279,6 +308,20 @@ def _run(args: argparse.Namespace) -> int:
             print(f"DPI: {result['dpi']} (stage {result['dpi_index']}, zero-based)")
             print(f"DPI stages: {', '.join(map(str, result['dpi_values']))}")
             print(f"Polling rate: {result['polling_rate']} Hz")
+            if args.advanced:
+                for field in (
+                    "custom_dpi",
+                    "dpi_stage_count",
+                    "sleep",
+                    "gesture",
+                    "force_gesture_scroll",
+                    "macros",
+                ):
+                    print(f"{field}: {json.dumps(result[field])}")
+                print(
+                    f"Macro buffer: {result['macro_buffer_size']} bytes "
+                    f"({result['macro_count']} slots)"
+                )
         return 0
 
     if args.command == "receiver-info":

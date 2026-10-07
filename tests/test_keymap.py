@@ -195,12 +195,26 @@ def test_cli_plan_requests_keymap_for_layer_config(mapped, monkeypatch, tmp_path
         info,
         *,
         include_keymap,
+        include_device_settings=False,
         include_layer_orientations=False,
         include_macro_buffer=False,
+        include_gesture=False,
+        include_force_gesture_scroll=False,
+        tap_hold_targets=(),
+        combo_targets=(),
+        allow_missing_tap_holds=False,
+        allow_missing_combos=False,
         timeout_ms,
     ):
         assert include_keymap
-        assert not include_layer_orientations and not include_macro_buffer
+        assert (
+            not include_device_settings
+            and not include_layer_orientations
+            and not include_macro_buffer
+        )
+        assert not include_gesture and not include_force_gesture_scroll
+        assert not tap_hold_targets and not combo_targets
+        assert not allow_missing_tap_holds and not allow_missing_combos
         return read_snapshot_from_device(mapped, include_keymap=True)
 
     monkeypatch.setattr(cli, "read_snapshot", read)

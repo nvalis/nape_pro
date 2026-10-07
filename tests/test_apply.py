@@ -25,19 +25,28 @@ class WritableNape(FakeNape):
         self.other_slot_connected = False
         self.firmware = b"v1.1.6-ZK"
         self.change_keymap = False
+        self.omit_layer_ack = False
+        self.orientation_follows_active_layer = False
+        self.layer_angles = {1: 90, 2: 0}
 
     def write(self, packet: bytes) -> int:
-        if (
-            packet[1:3]
-            in (
-                b"\xa7\x22",
-                b"\xa7\x23",
-                b"\xa7\x34",
-                b"\xa7\x0e",
-                b"\xa7\x39",
-            )
-            or packet[1] == 0x0F
-        ):
+        if packet[1:3] in (
+            b"\xa7\x22",
+            b"\xa7\x23",
+            b"\xa7\x34",
+            b"\xa7\x0e",
+            b"\xa7\x25",
+            b"\xa7\x27",
+            b"\xa7\x29",
+            b"\xa7\x2d",
+            b"\xa7\x2e",
+            b"\xa7\x2f",
+            b"\xa7\x32",
+            b"\xa7\x39",
+            b"\xa7\x37",
+            b"\xa7\x3d",
+            b"\xa7\x0c",
+        ) or packet[1] in (0x0F, 0x10):
             assert self.backup_path is not None and self.backup_path.is_file()
             backup = json.loads(self.backup_path.read_text())
             assert len(backup["layers"]) == 9
@@ -45,7 +54,9 @@ class WritableNape(FakeNape):
             if len(self.setters) == self.fail_write_number:
                 raise OSError("simulated USB failure")
             if not self.reject_writes:
-                if packet[1] == 0x0F:
+                if packet[1] == 0x10:
+                    self.macro_buffer = bytes(len(self.macro_buffer))
+                elif packet[1] == 0x0F:
                     offset = int.from_bytes(packet[2:4], "big")
                     size = packet[4]
                     buffer = bytearray(self.macro_buffer)
@@ -53,7 +64,16 @@ class WritableNape(FakeNape):
                     self.macro_buffer = bytes(buffer)
                 else:
                     sub = packet[2]
-                    if sub == 0x22:
+                    if sub == 0x37:
+                        self.custom_dpi = int.from_bytes(packet[3:5], "little")
+                    elif sub == 0x3D:
+                        self.dpi_stage_count = packet[3]
+                    elif sub == 0x0C:
+                        self.sleep_settings = {
+                            name: int.from_bytes(packet[3 + i * 2 : 5 + i * 2], "little")
+                            for i, name in enumerate(("backlight", "sleep", "magnet_scan"))
+                        }
+                    elif sub == 0x22:
                         self.dpi_index = packet[3]
                     elif sub == 0x23:
                         self.dpi_values[packet[3]] = int.from_bytes(packet[4:6], "little")
@@ -61,8 +81,52 @@ class WritableNape(FakeNape):
                         self.orientation = packet[3] * 45
                     elif sub == 0x0E:
                         self.rate_index = packet[3]
+                        self.secondary_rate_index = packet[4]
                     elif sub == 0x39:
                         self.layer_orientations[packet[3]] = packet[4] * 45
+                    elif sub == 0x2D:
+                        self.current_layer = packet[3]
+                        if self.orientation_follows_active_layer:
+                            self.orientation = self.layer_angles[self.current_layer]
+                    elif sub == 0x29:
+                        self.gesture = {
+                            name: int.from_bytes(packet[3 + i * 2 : 5 + i * 2], "little")
+                            for i, name in enumerate(("up", "down", "left", "right"))
+                        }
+                    elif sub == 0x32:
+                        self.force_gesture_scroll = {"gesture": packet[3], "scroll": packet[4]}
+                    elif sub == 0x25:
+                        layer, column = packet[3], packet[5]
+                        self.tap_holds[(layer, column)] = {
+                            "tap": int.from_bytes(packet[6:8], "little"),
+                            "held": int.from_bytes(packet[8:10], "little"),
+                        }
+                    elif sub == 0x2F:
+                        self.tap_holds.pop((packet[3], packet[5]), None)
+                    elif sub == 0x27:
+                        self.combos[packet[3]] = {
+                            "timeout_ms": int.from_bytes(packet[4:6], "little"),
+                            "layer": packet[6],
+                            "columns": packet[7],
+                            "tap": int.from_bytes(packet[8:10], "little"),
+                            "held": int.from_bytes(packet[10:12], "little"),
+                        }
+                    elif sub == 0x2E:
+                        self.combos.pop(packet[3], None)
+                if packet[1] in (0x0F, 0x10):
+                    self.response = packet[1:]
+                elif packet[2] == 0x2F or (packet[2] == 0x2D and self.omit_layer_ack):
+                    self.response = bytes(32)
+                else:
+                    ack = bytearray(32)
+                    ack[0] = 0xA7
+                    ack[1] = {0x2F: 0x25}.get(packet[2], packet[2])
+                    if packet[2] == 0x32:
+                        ack[2] = 0
+                    self.response = bytes(ack)
+            elif packet[1:3] == b"\xa7\x34":
+                # An ACK is not proof that storage accepted the requested value.
+                self.response = packet[1:]
             return len(packet)
         count = super().write(packet)
         reply = bytearray(self.response)
@@ -129,29 +193,140 @@ def test_explicit_apply_saves_backup_then_verifies_all_pointer_fields(writable) 
     assert writable.closed
 
 
-def test_apply_per_layer_orientation_saves_and_verifies_full_layers(writable) -> None:
+def test_apply_per_layer_orientation_is_blocked_on_known_firmware(writable) -> None:
     config = validate_config({"schema_version": 1, "layers": [{"layer": 3, "orientation": 135}]})
-    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
-    assert result["mode"] == "applied" and result["verified"]
-    assert writable.layer_orientations[3] == 135
-    assert writable.setters[0][1:5] == bytes.fromhex("a7 39 03 03")
-    backup = json.loads(writable.backup_path.read_text())
-    assert backup["layers"][3]["orientation"] == 0
+    with pytest.raises(ValueError, match="per-layer orientation is unreadable"):
+        apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert not writable.setters and not writable.backup_path.exists()
+    assert not any(p[:2] == b"\xa7\x38" for p in writable.requests)
+    assert writable.closed
 
 
-def test_apply_macro_buffer_in_chunks_and_read_back(writable) -> None:
-    target = bytes(reversed(range(56))).hex()
-    config = validate_config({"schema_version": 1, "macro_buffer": target})
+def test_layer_switch_and_orientation_must_be_applied_separately(writable) -> None:
+    writable.current_layer = 1
+    config = validate_config({"schema_version": 1, "active_layer": 2, "orientation": 135})
+    with pytest.raises(ValueError, match="in separate applies"):
+        apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert not writable.setters and not writable.backup_path.exists()
+
+
+def test_apply_active_layer_verifies_readback_when_device_omits_ack(writable) -> None:
+    writable.current_layer = 1
+    writable.omit_layer_ack = True
+    writable.orientation_follows_active_layer = True
+    config = validate_config({"schema_version": 1, "active_layer": 2})
     result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
-    assert result["mode"] == "applied" and result["verified"]
-    assert writable.macro_buffer.hex() == target
-    macro_packets = [packet for packet in writable.setters if packet[1] == 0x0F]
-    assert [(packet[2], packet[3], packet[4]) for packet in macro_packets] == [
-        (0, 0, 28),
-        (0, 28, 28),
+    assert result["verified"]
+    assert writable.current_layer == 2 and writable.orientation == 0
+    assert writable.setters[0][1:4] == bytes.fromhex("a7 2d 02")
+
+
+def test_apply_gesture_and_force_scroll_match_launcher_packets(writable) -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "gesture": {"up": "0x0009"},
+            "force_gesture_scroll": {"gesture": 1, "scroll": 0},
+        }
+    )
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"]
+    assert writable.gesture == {"up": 9, "down": 2, "left": 3, "right": 4}
+    assert writable.force_gesture_scroll == {"gesture": 1, "scroll": 0}
+    assert [packet[1:12] for packet in writable.setters] == [
+        bytes.fromhex("a7 29 09 00 02 00 03 00 04 00 00"),
+        bytes.fromhex("a7 32 01 00 00 00 00 00 00 00 00"),
     ]
-    backup = json.loads(writable.backup_path.read_text())
-    assert backup["macro_buffer"] == bytes(range(56)).hex()
+
+
+def test_apply_tap_hold_matches_launcher_little_endian_layout(writable) -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1"}],
+        }
+    )
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"]
+    assert writable.tap_holds[(0, 4)] == {"tap": 4, "held": 0xE1}
+    assert writable.setters[0][1:10] == bytes.fromhex("a7 25 00 00 04 04 00 e1 00")
+
+
+def test_apply_tap_hold_delete_verifies_readback_without_ack(writable) -> None:
+    writable.tap_holds[(0, 4)] = {"tap": 4, "held": 0xE1}
+    config = validate_config(
+        {"schema_version": 1, "tap_holds": [{"layer": 0, "button": "M1", "delete": True}]}
+    )
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"]
+    assert writable.tap_holds == {}
+    assert writable.setters[0][1:6] == bytes.fromhex("a7 2f 00 00 04")
+
+
+def test_tap_hold_delete_without_ack_must_still_remove_the_record(writable) -> None:
+    writable.tap_holds[(0, 4)] = {"tap": 4, "held": 0xE1}
+    writable.reject_writes = True
+    config = validate_config(
+        {"schema_version": 1, "tap_holds": [{"layer": 0, "button": "M1", "delete": True}]}
+    )
+    with pytest.raises(RuntimeError, match="read-back mismatch: tap_holds"):
+        apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert len(writable.setters) == 1 and writable.backup_path.exists()
+
+
+def test_apply_combo_update_matches_launcher_layout(writable) -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "combos": [
+                {
+                    "index": 0,
+                    "layer": 0,
+                    "columns": 3,
+                    "tap": "0x0006",
+                    "held": "0x0005",
+                    "timeout_ms": 200,
+                }
+            ],
+        }
+    )
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"]
+    assert writable.combos[0]["tap"] == 6
+    assert writable.setters[0][1:12] == bytes.fromhex("a7 27 00 c8 00 00 03 06 00 05 00")
+
+
+def test_apply_combo_delete_matches_launcher_layout(writable) -> None:
+    config = validate_config({"schema_version": 1, "combos": [{"index": 0, "delete": True}]})
+    result = apply_pointer_config(
+        RECEIVER, config, write=True, backup=writable.backup_path, timeout_ms=25
+    )
+    assert result["verified"]
+    assert writable.combos == {}
+    assert writable.setters[0][1:4] == bytes.fromhex("a7 2e 00")
+
+
+@pytest.mark.parametrize("field", ["macros", "macro_buffer"])
+def test_complete_macro_replacement_is_backed_up_and_verified(writable, field) -> None:
+    target = bytes.fromhex("01 01 04 00") + bytes(52)
+    value = [[{"type": "tap", "keycode": "0x0004"}], []] if field == "macros" else target.hex()
+    config = validate_config({"schema_version": 1, field: value})
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"] and writable.macro_buffer == target
+    assert writable.setters[0][1] == 0x10
+    assert writable.setters[1][1:6] == bytes.fromhex("0f 00 37 01 ff")
+    assert writable.setters[-1][1:6] == bytes.fromhex("0f 00 37 01 00")
+    assert json.loads(writable.backup_path.read_text())["macro_buffer"] == bytes(56).hex()
+
+
+def test_structured_macro_dry_run_remains_available(writable) -> None:
+    config = validate_config(
+        {"schema_version": 1, "macros": [[{"type": "tap", "keycode": "0x0004"}], []]}
+    )
+    result = apply_pointer_config(RECEIVER, config)
+    assert result["mode"] == "dry-run"
+    assert result["changes"][0]["setting"] == "macro_buffer"
+    assert not writable.setters and not writable.backup_path.exists()
 
 
 def test_missing_backup_is_rejected_before_opening_hardware(monkeypatch) -> None:

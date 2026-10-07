@@ -40,6 +40,18 @@ CURRENT = {
         {"schema_version": 1, "layers": [{"layer": 0, "orientation": True}]},
         {"schema_version": 1, "layers": [{"layer": 0}]},
         {"schema_version": 1, "layers": [{"layer": 0, "unknown": 1}]},
+        {"schema_version": 1, "active_layer": True},
+        {"schema_version": 1, "gesture": {"bad": "0x0001"}},
+        {
+            "schema_version": 1,
+            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0000", "held": "0x0000"}],
+        },
+        {
+            "schema_version": 1,
+            "combos": [{"index": 0, "layer": 0, "columns": 0, "tap": "0x0001", "held": "0x0002"}],
+        },
+        {"schema_version": 1, "macros": [[{"type": "tap", "keycode": "0x0100"}]]},
+        {"schema_version": 1, "macros": [[{"type": "text", "text": "bad\u0000text"}]]},
     ],
 )
 def test_invalid_configs_are_rejected(data: object) -> None:
@@ -66,6 +78,111 @@ def test_dpi_diff_contains_only_changed_stages() -> None:
 
 def test_noop_config_has_empty_diff() -> None:
     assert plan_changes(validate_config({"schema_version": 1, "orientation": 90}), CURRENT) == []
+
+
+def test_launcher_advanced_config_normalizes_wire_values() -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "active_layer": 2,
+            "gesture": {"up": "0x00E9"},
+            "force_gesture_scroll": {"gesture": 1, "scroll": 0},
+            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1"}],
+            "combos": [
+                {
+                    "index": 1,
+                    "layer": 2,
+                    "columns": 5,
+                    "tap": "0x0004",
+                    "held": "0x00E1",
+                }
+            ],
+            "macros": [[{"type": "tap", "keycode": "0x0004"}]],
+        }
+    )
+    normalized = config.to_dict()
+    assert normalized["active_layer"] == 2
+    assert normalized["gesture"] == {"up": "0x00E9"}
+    assert normalized["tap_holds"][0]["held"] == "0x00E1"
+    assert normalized["combos"][0]["timeout_ms"] == 200
+    assert normalized["macros"] == [[{"type": "tap", "keycode": "0x0004"}]]
+
+
+def test_advanced_plan_merges_only_requested_values() -> None:
+    current = {
+        **CURRENT,
+        "active_layer": 0,
+        "gesture": {"up": 0, "down": 0, "left": 0, "right": 0},
+        "force_gesture_scroll": {"gesture": 0, "scroll": 0},
+        "tap_holds": {"0:M1": None},
+        "combos": {"0": {"layer": 0, "columns": 3, "tap": 4, "held": 5, "timeout_ms": 200}},
+        "macro_count": 1,
+        "macro_buffer_size": 32,
+        "via_protocol_version": 12,
+        "macro_buffer": bytes(32).hex(),
+    }
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "active_layer": 1,
+            "gesture": {"up": "0x0001"},
+            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1"}],
+            "combos": [{"index": 0, "layer": 0, "columns": 3, "tap": "0x0006", "held": "0x0005"}],
+            "macros": [[{"type": "tap", "keycode": "0x0004"}]],
+        }
+    )
+    changes = plan_changes(config, current)
+    assert [change.field for change in changes] == [
+        "active_layer",
+        "gesture",
+        "tap_hold",
+        "combo",
+        "macro_buffer",
+    ]
+    assert changes[-1].after.startswith("01010400")
+
+
+def test_combo_create_requires_confirmed_empty_slot() -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "combos": [
+                {
+                    "index": 3,
+                    "layer": 0,
+                    "columns": 3,
+                    "tap": "0x0004",
+                    "held": "0x0005",
+                    "create": True,
+                }
+            ],
+        }
+    )
+    current = {**CURRENT, "combos": {"3": None}}
+    assert plan_changes(config, current)[0].field == "combo"
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        plan_changes(config, {**current, "combos": {"3": {"tap": 1}}})
+
+
+def test_tap_hold_create_requires_confirmed_empty_target() -> None:
+    config = validate_config(
+        {
+            "schema_version": 1,
+            "tap_holds": [
+                {
+                    "layer": 0,
+                    "button": "M1",
+                    "tap": "0x0004",
+                    "held": "0x00E1",
+                    "create": True,
+                }
+            ],
+        }
+    )
+    current = {**CURRENT, "tap_holds": {"0:M1": None}}
+    assert plan_changes(config, current)[0].field == "tap_hold"
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        plan_changes(config, {**current, "tap_holds": {"0:M1": {"tap": 4, "held": 5}}})
 
 
 def test_macro_buffer_is_normalized_and_compared_as_binary() -> None:
