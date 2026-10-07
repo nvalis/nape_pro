@@ -1,6 +1,6 @@
 # CLI and settings reference
 
-Scope: `nape-cli` **0.2.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Pointer setters are experimental, **not yet hardware-tested**. `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
+Scope: `nape-cli` **0.2.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Active DPI-stage selection/restoration is hardware-tested; other pointer setters remain experimental and simulated-device tested only. See the [hardware log](hardware-tests.md). `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
 
 ## Complete CLI command list
 

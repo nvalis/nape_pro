@@ -2,7 +2,8 @@
 
 The command IDs come from the reverse-engineered Keychron Launcher protocol
 notes linked in README.md. Reads through the Link-KM Raw HID collection have
-been verified on-device; direct USB framing and pointer writes remain unverified.
+been verified on-device, as has active DPI-stage selection/restoration. Direct
+USB framing and other pointer setters remain unverified.
 """
 
 from __future__ import annotations

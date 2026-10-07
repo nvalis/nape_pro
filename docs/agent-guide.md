@@ -1,6 +1,6 @@
 # Agent guide: working with a Nape Pro
 
-**Current CLI: 0.2.0.** Reads are hardware-tested; pointer-setting writes are experimental and simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Keymap writes, full restore, and YAML loading are not implemented. Editing an export does not change the device.
+**Current CLI: 0.2.0.** Reads and active DPI-stage selection/restoration are hardware-tested; other pointer setters remain experimental and simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Keymap writes, full restore, and YAML loading are not implemented. Editing an export does not change the device.
 
 See the [configuration guide](configuration.md) for the JSON schema, write guards, and failure recovery; the [CLI/settings reference](cli-reference.md) for every command/field; and the [protocol reference](protocol-reference.md) for implementation status.
 
@@ -27,7 +27,7 @@ uv run nape export nape-before.json
 
 1. Read status and export the current state before proposing changes.
 2. Confirm the desired settings. Write a partial JSON config for orientation, five DPI values, DPI-stage selection, or supported polling rate. Use zero-based stage indices; omitted settings are preserved. Layers/buttons/dial bindings can only be inspected, not edited yet.
-3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose that real-device setter behavior/persistence remains unverified.
+3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose which setters lack hardware tests and that reboot persistence remains unverified.
 4. Obtain explicit user approval for the exact changes before `nape apply CONFIG --write --backup NEW_FILE`. Do not treat a generic request to inspect/build/test the CLI as permission to alter settings. Write guards require the observed firmware/slot combination; do not bypass them with raw packets.
 5. Apply verifies read-back and keymap preservation. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
 

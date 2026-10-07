@@ -1,6 +1,7 @@
 """Explicit, experimental pointer writes with prior snapshot and read-back.
 
-Setter layouts are from NapeBar; real-device writes have not been tested here.
+Setter layouts are from NapeBar; active DPI-stage selection/restoration has
+passed a hardware test. Other setters remain unverified on-device.
 The existing read-only channel allowlist remains unchanged.
 """
 

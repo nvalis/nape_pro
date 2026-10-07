@@ -8,6 +8,7 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 - [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
 - [Pointer configuration](docs/configuration.md): JSON schema, validation/planning, and experimental apply with snapshot and verification.
 - [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
+- [Hardware verification log](docs/hardware-tests.md): tested writes, restoration, and remaining verification gaps.
 
 ## Current status
 
@@ -17,7 +18,7 @@ Nape read support is also verified through this receiver on firmware **v1.1.6-ZK
 
 `validate` checks a partial pointer JSON config offline; `plan` compares it with the device without writing. See [Pointer configuration](docs/configuration.md).
 
-`apply` defaults to dry-run. Experimental pointer writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Writes are covered by simulated-device tests, **not yet real-device write tests**. Read-back verifies changed and unchanged pointer fields and checks the keymap stayed unchanged; failures may leave partial changes and are not automatically rolled back.
+`apply` defaults to dry-run. Experimental pointer writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; DPI-value, orientation, and polling-rate writes remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies changed and unchanged pointer fields and checks the keymap stayed unchanged; failures may leave partial changes and are not automatically rolled back.
 
 Direct USB transport is still unverified. `probe` rejects the Link-KM receiver and sends only read commands. `protocol set-orientation` only prints a packet.
 

@@ -13,7 +13,7 @@ Use a separate, partial **JSON config** rather than editing an exported snapshot
 | `dpi_values` | Exactly five integers, each `1..65535` |
 | `polling_rate` | Integer from `8000,4000,2000,1000,500,250,125`; must also be reported supported by the connected device |
 
-Unspecified settings are preserved. Unknown/duplicate fields, nulls, booleans, strings, and floats in place of integers are rejected. DPI limits are wire-encoding limits, **not verified sensor limits**; firmware may reject or quantize values. Use known-good values until write behavior is verified. Offline validation cannot check the connected device's supported polling rates.
+Unspecified settings are preserved. Unknown/duplicate fields, nulls, booleans, strings, and floats in place of integers are rejected. DPI limits are wire-encoding limits, **not verified sensor limits**; firmware may reject or quantize values. Use known-good values until DPI-value write behavior is verified. Offline validation cannot check the connected device's supported polling rates.
 
 Example partial config:
 
@@ -55,7 +55,7 @@ Apply supports `--index`, `--timeout-ms` (per read request), and `--json`. JSON 
 
 ### Guardrails and limitations
 
-- Writes are **not yet hardware-tested**. Setter packet layouts come from NapeBar and are covered by simulated-device tests. Reads are hardware-tested.
+- Active DPI-stage selection and restoration are hardware-tested; DPI-value, orientation, and polling-rate writes are simulated-device tested only. Setter layouts come from NapeBar. See the [hardware log](hardware-tests.md).
 - Write mode accepts only the observed firmware token **`v1.1.6-ZK`**, with **only `3434:4004` connected in receiver slot 0**. Other firmware/slot combinations are refused, with no override flag.
 - Before a setter, apply reads the supported full snapshot (including nine keymap layers), shows the diff, then saves and flushes/fsyncs the snapshot file. Backup failure prevents all setters.
 - Only changed settings are sent: individual DPI values first, then DPI stage, orientation, polling rate. Keymap and advanced settings have no write path.
@@ -69,4 +69,4 @@ Apply supports `--index`, `--timeout-ms` (per read request), and `--json`. JSON 
 
 Inspect `nape status --json` first. Preserve the saved snapshot and error output. There is no full snapshot restore command. To propose restoring just pointer settings, create a new config with `schema_version: 1` and the snapshot's `orientation`, `dpi_index`, `dpi_values`, and `polling_rate`; validate and plan it, then obtain explicit approval before another `--write` using a **different** backup path. Do not submit the whole snapshot as config or claim it restores macros/advanced behaviors.
 
-If writes remain unverified or the target fails the guards, use Keychron Launcher rather than sending ad-hoc packets.
+If a requested setter remains unverified or the target fails the guards, consider Keychron Launcher rather than sending ad-hoc packets.

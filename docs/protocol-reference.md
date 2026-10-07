@@ -1,6 +1,6 @@
 # Relevant protocol command reference
 
-For implementation planning, not instructions to send arbitrary packets. The [CLI reference](cli-reference.md) lists the commands agents can actually run. **Pointer writes are implemented experimentally, not hardware-verified; all other writes remain unimplemented.** A command ID in this document does not establish firmware support.
+For implementation planning, not instructions to send arbitrary packets. The [CLI reference](cli-reference.md) lists the commands agents can actually run. **Active DPI-stage selection/restoration is hardware-tested; other pointer setters remain experimental, and all other writes remain unimplemented.** A command ID in this document does not establish firmware support.
 
 ## Tested transport and decoding
 
@@ -39,7 +39,7 @@ Polling-rate index/bitmap bit table: `0→8000`, `1→4000`, `2→2000`, `3→10
 
 ## Experimental pointer setter encodings
 
-These are the only write payloads `apply` can construct, padded to 32 bytes with the same unnumbered HID envelope. They come from the NapeBar source, not our hardware write tests.
+These are the only write payloads `apply` can construct, padded to 32 bytes with the same unnumbered HID envelope. Layouts come from the NapeBar source; only `A7 22` currently has a passing hardware write/restore test.
 
 | Prefix (hex) | Meaning |
 |---|---|
@@ -58,7 +58,7 @@ All are under top-level **`A7`**. Names below omit the common `KC_USER_CMD_NAPE_
 |---|---|---|---|
 | `20` | `GET_ORI` | Read | Verified global/default angle |
 | `21` | `GET_DPI` | Read | Verified active stage |
-| `22` | `SET_DPI` | Write | Experimental apply; not hardware-tested |
+| `22` | `SET_DPI` | Write | Hardware-tested selection and restoration via apply |
 | `23` | `SET_DPI_VALUE` | Write | Experimental apply; not hardware-tested |
 | `24` | `GET_DPI_VALUE` | Read | Verified stage DPI |
 | `25` | `SET_TAPHOLDS` | Write | Source-only |
