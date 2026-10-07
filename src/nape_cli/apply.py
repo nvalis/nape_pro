@@ -1,4 +1,4 @@
-"""Explicit, experimental pointer writes with prior snapshot and read-back.
+"""Explicit, guarded pointer/keymap writes with prior snapshot and read-back.
 
 Setter layouts are from NapeBar; active DPI-stage selection/restoration has
 passed a hardware test. Other setters remain unverified on-device.
@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
+    DIAL_ORDER,
     POINTER_FIELDS,
     Change,
-    PointerConfig,
+    NapeConfig,
     desired_settings,
     plan_changes,
     validate_config,
@@ -25,13 +26,36 @@ from .config import (
 from .devices import hid_backend
 from .protocol import NapeCommand, build_request, orientation_units
 from .receiver import validate_receiver
-from .snapshot import POLLING_RATES, read_snapshot_from_device
+from .snapshot import BUTTON_ORDER, POLLING_RATES, read_snapshot_from_device
 
 
 def encode_change(change: Change) -> bytes:
-    """Encode only a validated pointer setter, never a caller-supplied raw packet."""
+    """Encode a validated setter, never a caller-supplied raw packet."""
     if type(change.after) is not int:
         raise ValueError("setter value must be an integer")
+    if change.field in ("buttons", "dial"):
+        if type(change.layer) is not int or not 0 <= change.layer < 9:
+            raise ValueError("keymap layer must be in 0..8")
+        names = BUTTON_ORDER if change.field == "buttons" else DIAL_ORDER
+        if (
+            change.binding not in names
+            or change.index is not None
+            or not 0 <= change.after <= 65535
+        ):
+            raise ValueError("invalid keymap binding, keycode, or stage index")
+        command = 0x05 if change.field == "buttons" else 0x15
+        return bytes(
+            (
+                command,
+                change.layer,
+                0,
+                names.index(change.binding),
+                change.after >> 8,
+                change.after & 0xFF,
+            )
+        ).ljust(32, b"\x00")
+    if change.layer is not None or change.binding is not None:
+        raise ValueError("pointer setters do not accept layer/binding parameters")
     if change.field == "dpi_values":
         if type(change.index) is not int or not 0 <= change.index < 5:
             raise ValueError("DPI stage index must be in 0..4")
@@ -53,6 +77,23 @@ def encode_change(change: Change) -> bytes:
             raise ValueError("unknown polling rate")
         return bytes((0xA7, 0x0E, POLLING_RATES.index(change.after))).ljust(32, b"\x00")
     raise ValueError(f"unsupported setter: {change.field}")
+
+
+def _wait_keymap_ack(device: Any, command: int, timeout_ms: int) -> None:
+    """Drain a serialized keymap setter ACK before sending the next entry.
+
+    As in the source implementation, ACK matching uses the setter command.
+    The subsequent full read-back, not the ACK, establishes the target values.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+        reply = bytes(device.read(64, remaining_ms))
+        if reply and reply[0] == command:
+            if len(reply) != 32:
+                raise ValueError("keymap setter ACK must contain 32 payload bytes")
+            return
+    raise TimeoutError(f"keymap setter 0x{command:02X} ACK timed out")
 
 
 def _validate_write_target(snapshot: dict[str, Any]) -> None:
@@ -78,16 +119,16 @@ def _save_backup(path: Path, snapshot: dict[str, Any]) -> None:
         os.fsync(file.fileno())
 
 
-def apply_pointer_config(
+def apply_config(
     device_info: dict[str, Any],
-    config: PointerConfig,
+    config: NapeConfig,
     *,
     write: bool = False,
     backup: Path | None = None,
     timeout_ms: int = 1500,
     on_plan: Callable[[list[Change]], None] | None = None,
 ) -> dict[str, Any]:
-    """Default to planning; explicit writes affect only changed pointer fields.
+    """Default to planning; explicit writes affect only requested changed entries.
 
     Partial failure is not rolled back automatically: unknown firmware behavior
     and external edits make blind rollback unsafe. The backup is retained and
@@ -107,7 +148,9 @@ def apply_pointer_config(
     device = hid_backend().device()
     try:
         device.open_path(device_info["path"])
-        before = read_snapshot_from_device(device, include_keymap=write, timeout_ms=timeout_ms)
+        before = read_snapshot_from_device(
+            device, include_keymap=write or bool(config.layers), timeout_ms=timeout_ms
+        )
         if write:
             _validate_write_target(before)
         changes = plan_changes(config, before)
@@ -132,15 +175,17 @@ def apply_pointer_config(
                 attempts += 1
                 if device.write(packet) != len(packet):
                     raise OSError("incomplete HID setter write")
+                if packet[1] in (0x05, 0x15):
+                    _wait_keymap_ack(device, packet[1], timeout_ms)
                 time.sleep(0.05)
-            # The source implementation uses fire-and-forget pointer setters.
-            # A successful HID write is not proof of acceptance or persistence.
+            # Pointer setters are fire-and-forget; keymap setters wait for ACKs.
+            # Neither successful USB writes nor ACKs prove acceptance/persistence.
             time.sleep(0.2)
             after = read_snapshot_from_device(device, include_keymap=True, timeout_ms=timeout_ms)
             _validate_write_target(after)
             mismatches = [field for field in POINTER_FIELDS if after[field] != expected[field]]
-            if after["layers"] != before["layers"]:
-                mismatches.append("layers (not intentionally modified)")
+            if after["layers"] != expected["layers"]:
+                mismatches.append("layers")
             if mismatches:
                 raise ValueError(f"read-back mismatch: {', '.join(mismatches)}")
         except (OSError, RuntimeError, ValueError, KeyboardInterrupt) as exc:

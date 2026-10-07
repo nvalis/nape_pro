@@ -1,6 +1,6 @@
 # Agent guide: working with a Nape Pro
 
-**Current CLI: 0.2.0.** Reads and active DPI-stage selection/restoration are hardware-tested; other pointer setters remain experimental and simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Keymap writes, full restore, and YAML loading are not implemented. Editing an export does not change the device.
+**Current CLI: 0.3.0.** Reads and active DPI-stage selection/restoration are hardware-tested; other pointer and keymap setters remain simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Full restore, advanced behavior configuration, symbolic keycodes, and YAML loading are not implemented. Editing an export does not change the device.
 
 See the [configuration guide](configuration.md) for the JSON schema, write guards, and failure recovery; the [CLI/settings reference](cli-reference.md) for every command/field; and the [protocol reference](protocol-reference.md) for implementation status.
 
@@ -26,10 +26,10 @@ uv run nape export nape-before.json
 ## Handling a request to configure
 
 1. Read status and export the current state before proposing changes.
-2. Confirm the desired settings. Write a partial JSON config for orientation, five DPI values, DPI-stage selection, or supported polling rate. Use zero-based stage indices; omitted settings are preserved. Layers/buttons/dial bindings can only be inspected, not edited yet.
+2. Confirm the desired settings. Write a partial JSON config for pointer settings and/or layer button/dial bindings. Use zero-based layer/stage indices and four-digit hex keycodes; omitted entries are preserved. Do not invent firmware action codes or promise physical behavior from a successful storage read-back.
 3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose which setters lack hardware tests and that reboot persistence remains unverified.
 4. Obtain explicit user approval for the exact changes before `nape apply CONFIG --write --backup NEW_FILE`. Do not treat a generic request to inspect/build/test the CLI as permission to alter settings. Write guards require the observed firmware/slot combination; do not bypass them with raw packets.
-5. Apply verifies read-back and keymap preservation. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
+5. Apply verifies all pointer fields and the complete expected keymap, including preserved entries. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
 
 An export covers pointer settings, seven button entries per layer, and two dial directions across nine layers. It is **not a complete backup**: macros, tap-holds, combos, gestures, and per-layer orientation are omitted. There is no restore command.
 
@@ -47,11 +47,13 @@ For WSL, run in Windows PowerShell after checking `usbipd list`:
 
 ```powershell
 usbipd attach --wsl --busid <busid>
-# Restore Windows access when finished:
+# Detach when finished:
 usbipd detach --busid <busid>
+# If force-bound, also run in Administrator PowerShell to restore Windows access:
+usbipd unbind --busid <busid>
 ```
 
-Attaching takes the receiver away from Windows. Obtain permission before doing this. Binding/force-binding requires Administrator PowerShell; do not assume the bus ID stays constant. Linux device permissions may reset after reconnection.
+Attaching takes the receiver away from Windows. Obtain permission before doing this. Binding/force-binding and unbinding require Administrator PowerShell; force-binding prevents Windows use even after detach. Do not assume the bus ID stays constant. Linux device permissions may reset after reconnection.
 
 ## When extending the CLI
 

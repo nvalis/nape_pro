@@ -1,6 +1,6 @@
 # Relevant protocol command reference
 
-For implementation planning, not instructions to send arbitrary packets. The [CLI reference](cli-reference.md) lists the commands agents can actually run. **Active DPI-stage selection/restoration is hardware-tested; other pointer setters remain experimental, and all other writes remain unimplemented.** A command ID in this document does not establish firmware support.
+For implementation planning, not instructions to send arbitrary packets. The [CLI reference](cli-reference.md) lists the commands agents can actually run. **Active DPI-stage selection/restoration is hardware-tested; other pointer and keymap setters remain experimental. Advanced writes remain unimplemented.** A command ID in this document does not establish firmware support.
 
 ## Tested transport and decoding
 
@@ -35,11 +35,11 @@ Keymap offset = `layer * 14`, layer `0..8`. Column order: `03`, `04`, `01`, `02`
 
 Polling-rate index/bitmap bit table: `0→8000`, `1→4000`, `2→2000`, `3→1000`, `4→500`, `5→250`, `6→125` Hz. This is a decoder table, **not** a claim that the Nape supports 8 kHz. Honor the device's supported-rate bitmap.
 
-`BC` is an unsolicited receiver state notification, not a host command. Nape `A3` reports may also arrive asynchronously. The shared read path admits only the command IDs in the table above; `A7` is restricted to subcommands `0D`, `20`, `21`, `24`, `31`. Experimental apply encodes only separate pointer setters, requiring backup/target guards and read-back; it does not relax this read allowlist.
+`BC` is an unsolicited receiver state notification, not a host command. Nape `A3` reports may also arrive asynchronously. The shared read path admits only the command IDs in the table above; `A7` is restricted to subcommands `0D`, `20`, `21`, `24`, `31`. Guarded apply encodes separate pointer/keymap setters, requiring backup/target guards and read-back; it does not relax this read allowlist.
 
 ## Experimental pointer setter encodings
 
-These are the only write payloads `apply` can construct, padded to 32 bytes with the same unnumbered HID envelope. Layouts come from the NapeBar source; only `A7 22` currently has a passing hardware write/restore test.
+These are the pointer write payloads `apply` can construct, padded to 32 bytes with the same unnumbered HID envelope. Layouts come from the NapeBar source; only `A7 22` currently has a passing hardware write/restore test.
 
 | Prefix (hex) | Meaning |
 |---|---|
@@ -49,6 +49,17 @@ These are the only write payloads `apply` can construct, padded to 32 bytes with
 | `A7 0E rate_index` | Set polling rate using the decode table above |
 
 Only changed values are sent, in the order above. Apply does not depend on setter ACKs: it waits briefly, then reads back all pointer fields and the keymap. Firmware may reject/quantize input; persistence across reboot is not established. Use the guarded CLI, never arbitrary raw packets.
+
+## Experimental keymap setter encodings
+
+These use the same 32-byte envelope and guarded apply path, but are not hardware-tested yet.
+
+| Prefix (hex) | Meaning |
+|---|---|
+| `05 layer 00 column keycode_hi keycode_lo` | Set one row-0 button binding; column `0..6` follows the button order above |
+| `15 layer 00 direction keycode_hi keycode_lo` | Set encoder-0 CCW/CW binding; direction `0`/`1` |
+
+Layer indices are `0..8`; keycodes are BE16. Apply waits for a matching command ACK before the next keymap setter and stops on timeout without retry. ACKs do not establish the requested stored value: final read-back compares every layer/button/dial entry to the merged target, including unchanged entries.
 
 ## Full known NAPE subcommand list
 
@@ -84,14 +95,14 @@ Orientation uses units of 45 degrees. DPI stages are `0..4` on tested hardware. 
 
 ## Other relevant commands
 
-These IDs are reported by the linked sources, **not hardware-tested write support**. None are admitted by the current read allowlist. Only the polling-rate setter has an experimental apply implementation; other entries remain source-only.
+These IDs are reported by the linked sources, **not hardware-tested write support**. None are admitted by the current read allowlist. Single-key, encoder, and polling-rate setters have experimental apply implementations; other entries remain source-only.
 
 | Prefix (hex) | Name / purpose | Direction |
 |---|---|---|
 | `04` | `DYNAMIC_KEYMAP_GET_KEYCODE`, one key | Read |
-| `05` | `DYNAMIC_KEYMAP_SET_KEYCODE`, one key | Write |
+| `05` | `DYNAMIC_KEYMAP_SET_KEYCODE`, one key (experimental apply) | Write |
 | `13` | `DYNAMIC_KEYMAP_SET_BUFFER`, keymap bytes | Write |
-| `15` | `DYNAMIC_KEYMAP_SET_ENCODER` | Write |
+| `15` | `DYNAMIC_KEYMAP_SET_ENCODER` (experimental apply) | Write |
 | `0C` | `DYNAMIC_KEYMAP_MACRO_GET_COUNT` | Read |
 | `0D` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE` | Read |
 | `0E` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER` | Read |
@@ -99,7 +110,7 @@ These IDs are reported by the linked sources, **not hardware-tested write suppor
 | `10` | `DYNAMIC_KEYMAP_MACRO_RESET` | Write/reset |
 | `A7 0E` | Polling-rate setter from NapeBar (experimental apply) | Write |
 
-A top-level `0D` is a macro query, whereas **`A7 0D`** is a polling query. Do not confuse the command namespaces. Keymap writes and macro encodings/capacities remain unimplemented. Setter acceptance, persistence, acknowledgements, and restoration behavior still need hardware verification; apply currently checks immediate read-back only.
+A top-level `0D` is a macro query, whereas **`A7 0D`** is a polling query. Do not confuse the command namespaces. Buffer-based keymap writes and macro encodings/capacities remain unimplemented. Setter acceptance, persistence, acknowledgements, and restoration behavior still need hardware verification; apply currently checks immediate read-back only.
 
 Factory reset, bootloader, firmware-update, RGB, Hall Effect, and generic high-rate mouse protocols are outside this reference's Nape configuration scope. Do not send them during configuration inspection.
 

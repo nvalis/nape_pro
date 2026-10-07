@@ -6,7 +6,7 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 
 - [Agent guide](docs/agent-guide.md): safe inspection workflow, configuration limitations, and connection troubleshooting.
 - [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
-- [Pointer configuration](docs/configuration.md): JSON schema, validation/planning, and experimental apply with snapshot and verification.
+- [Configuration](docs/configuration.md): partial pointer/keymap JSON, validation/planning, and guarded apply with snapshot and verification.
 - [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
 - [Hardware verification log](docs/hardware-tests.md): tested writes, restoration, and remaining verification gaps.
 
@@ -16,9 +16,9 @@ Implemented: HID discovery and read-only Link-KM receiver queries, tested agains
 
 Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. Read requests go through a read-command allowlist; experimental pointer setters use a separate, restricted write path.
 
-`validate` checks a partial pointer JSON config offline; `plan` compares it with the device without writing. See [Pointer configuration](docs/configuration.md).
+`validate` checks a partial pointer/keymap JSON config offline; `plan` compares it with the device without writing. See [Configuration](docs/configuration.md).
 
-`apply` defaults to dry-run. Experimental pointer writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; DPI-value, orientation, and polling-rate writes remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies changed and unchanged pointer fields and checks the keymap stayed unchanged; failures may leave partial changes and are not automatically rolled back.
+`apply` defaults to dry-run. Guarded pointer/keymap writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; DPI-value, orientation, polling-rate, button, and dial writes remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies all pointer fields and the complete expected keymap, including omitted entries; failures may leave partial changes and are not automatically rolled back.
 
 Direct USB transport is still unverified. `probe` rejects the Link-KM receiver and sends only read commands. `protocol set-orientation` only prints a packet.
 
@@ -42,9 +42,9 @@ uv sync --extra hardware
 
 Linux uses the `hidraw` backend when available, avoiding the libusb backend's missing usage metadata and kernel-driver detachment. The user needs read/write access to the relevant `/dev/hidraw*` nodes; check permissions/udev rules if opening fails. Temporary permissions expire on USB reconnection.
 
-In WSL, attach the receiver/device with `usbipd attach --wsl --busid <busid>` from Windows. Sharing alone is not attachment. While attached, the receiver is unavailable to Windows; restore it with `usbipd detach --busid <busid>`.
+In WSL, attach the receiver/device with `usbipd attach --wsl --busid <busid>` from Windows. Sharing alone is not attachment. While attached, the receiver is unavailable to Windows. Detach with `usbipd detach --busid <busid>`; **if force-bound**, Windows access also requires `usbipd unbind --busid <busid>` in Administrator PowerShell. Detaching alone does not undo force-binding.
 
-Receiver and wireless Nape reads are supported, with experimental pointer-only writes. Keymap writes, direct USB Nape access, and Bluetooth are not yet implemented.
+Receiver and wireless Nape reads are supported, with guarded pointer/keymap writes. Direct USB Nape access, Bluetooth, and advanced behavior configuration remain unimplemented.
 
 ## Usage
 
@@ -76,15 +76,17 @@ These commands require an awake Nape in 2.4 GHz mode. Export never overwrites an
 
 **An export is not a complete firmware backup**: it does not include macros, tap-holds, combos, gestures, or per-layer orientation. It cannot be applied/restored yet. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
 
-Validate and preview a partial pointer configuration:
+Validate and preview a partial configuration:
 
 ```sh
 uv run nape validate examples/pointer-config.json
 uv run nape plan examples/pointer-config.json
 uv run nape apply examples/pointer-config.json --dry-run
+uv run nape validate examples/keymap-config.json
+uv run nape plan examples/keymap-config.json
 ```
 
-After reviewing the diff and explicitly choosing to write, use `nape apply CONFIG --write --backup NEW_FILE`. See [Pointer configuration](docs/configuration.md) for limitations and recovery guidance. Exported snapshots are not accepted as configs.
+After reviewing the diff and explicitly choosing to write, use `nape apply CONFIG --write --backup NEW_FILE`. See [Configuration](docs/configuration.md) for limitations and recovery guidance. Exported snapshots are not accepted as configs.
 
 Show candidate packets without sending them:
 

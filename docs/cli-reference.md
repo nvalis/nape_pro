@@ -1,6 +1,6 @@
 # CLI and settings reference
 
-Scope: `nape-cli` **0.2.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Active DPI-stage selection/restoration is hardware-tested; other pointer setters remain experimental and simulated-device tested only. See the [hardware log](hardware-tests.md). `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
+Scope: `nape-cli` **0.3.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Active DPI-stage selection/restoration is hardware-tested; other pointer/keymap setters remain simulated-device tested only. See the [hardware log](hardware-tests.md). `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
 
 ## Complete CLI command list
 
@@ -12,9 +12,9 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 | `nape receiver-info` | Read receiver protocol, firmware, paired slots | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: include raw packets |
 | `nape status` | Read Nape pointer settings and battery | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: all fields and raw packets |
 | `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
-| `nape validate CONFIG` | Validate a partial pointer JSON config offline | Required config path; `--json`: normalized config |
-| `nape plan CONFIG` | Read current settings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
-| `nape apply CONFIG` | Dry-run by default; optionally apply changed pointer settings | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape validate CONFIG` | Validate a partial pointer/keymap JSON config offline | Required config path; `--json`: normalized config |
+| `nape plan CONFIG` | Read current settings/bindings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
+| `nape apply CONFIG` | Dry-run by default; optionally apply changed pointer settings/bindings | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
 | `nape protocol get-orientation` | Print a zero-padded `A7 20` payload; send nothing | No required options |
 | `nape protocol get-dpi` | Print an `A7 21` payload; send nothing | No required options |
 | `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; **does not set orientation** | `--angle` required, one of `0,45,90,135,180,225,270,315` |
@@ -36,7 +36,7 @@ The [configuration guide](configuration.md) describes the separate partial-confi
 
 ## Available settings and observations
 
-`status --json` and `export` contain the same top-level fields, except that only export includes `layers`. Only **`orientation`, `dpi_index`, `dpi_values`, and `polling_rate`** have experimental setters through `apply`; all other fields are observations/metadata, not accepted config inputs.
+`status --json` and `export` contain the same top-level fields, except that only export includes `layers`. **`orientation`, `dpi_index`, `dpi_values`, `polling_rate`, and partial `layers` bindings** are accepted config inputs for guarded apply; all other fields are observations/metadata.
 
 | JSON field | Meaning / domain | Notes |
 |---|---|---|
@@ -116,11 +116,10 @@ Slots use indices `0..2`; `connected` means status byte equals `1`. Empty slots 
 
 ## Known features not exposed by this CLI
 
-These are protocol/source findings, **not guarantees that this firmware supports them**. Except for the four pointer setters already described, the following features remain unimplemented. Command IDs are in the [protocol reference](protocol-reference.md).
+These are protocol/source findings, **not guarantees that this firmware supports them**. Beyond pointer and keymap setters already described, the following features remain unimplemented. Command IDs are in the [protocol reference](protocol-reference.md).
 
 | Feature | Meaning |
 |---|---|
-| Button/encoder setters | Editing a layer's button bindings or dial rotations |
 | Active-layer switching | Selecting a layer on the device |
 | Per-layer orientation | Different trackball angle per layer |
 | Mouse profiles | Profile selection; distinct from DPI stages and keymap layers; count/layout unverified |

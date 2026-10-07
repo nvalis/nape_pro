@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "layers": [
+    {
+      "layer": 0,
+      "buttons": {
+        "M1": "0x0068",
+        "M2": "0x0069"
+      },
+      "dial": {
+        "ccw": "0x006A",
+        "cw": "0x006B"
+      }
+    }
+  ]
+}

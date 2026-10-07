@@ -6,7 +6,8 @@ from test_snapshot import RECEIVER, FakeNape
 
 from nape_cli import apply as apply_module
 from nape_cli import cli
-from nape_cli.apply import apply_pointer_config, encode_change
+from nape_cli.apply import apply_config as apply_pointer_config
+from nape_cli.apply import encode_change
 from nape_cli.config import Change, validate_config
 
 

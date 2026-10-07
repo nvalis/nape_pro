@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .apply import apply_pointer_config
+from .apply import apply_config
 from .config import Change, load_config, plan_changes
 from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
 from .protocol import NapeCommand, build_request, orientation_units
@@ -79,19 +79,19 @@ def _parser() -> argparse.ArgumentParser:
         "output", type=Path, help="new JSON snapshot file (never overwritten)"
     )
     validate_parser = commands.add_parser(
-        "validate", help="validate a partial pointer JSON config offline"
+        "validate", help="validate a partial pointer/keymap JSON config offline"
     )
     validate_parser.add_argument("config", type=Path)
     validate_parser.add_argument(
         "--json", action="store_true", help="print normalized configuration"
     )
     plan_parser = commands.add_parser(
-        "plan", help="preview pointer changes without writing settings"
+        "plan", help="preview configuration changes without writing settings"
     )
     plan_parser.add_argument("config", type=Path)
     plan_parser.add_argument("--json", action="store_true", help="print a machine-readable diff")
     apply_parser = commands.add_parser(
-        "apply", help="preview pointer changes; experimental writes require --write and --backup"
+        "apply", help="preview configuration changes; writes require --write and --backup"
     )
     apply_parser.add_argument("config", type=Path)
     apply_parser.add_argument("--json", action="store_true", help="print the result as JSON")
@@ -177,15 +177,18 @@ def _run(args: argparse.Namespace) -> int:
             mode = "Experimental write requested" if args.write else "Dry-run: no settings written"
             print(mode + ".", file=output, flush=True)
             for change in changes:
+                entry = change.to_dict()
                 print(
-                    f"{change.setting}: {change.before} -> {change.after}", file=output, flush=True
+                    f"{entry['setting']}: {entry['before']} -> {entry['after']}",
+                    file=output,
+                    flush=True,
                 )
             if args.write and changes:
                 print(f"Pre-write snapshot path: {args.backup}", file=output, flush=True)
             if not changes:
                 print("No changes needed.", file=output, flush=True)
 
-        result = apply_pointer_config(
+        result = apply_config(
             _select_receiver(args.index),
             config,
             write=args.write,
@@ -204,7 +207,11 @@ def _run(args: argparse.Namespace) -> int:
         if args.command == "validate":
             print(json.dumps(config.to_dict(), indent=2) if args.json else "Configuration valid.")
             return 0
-        current = read_snapshot(_select_receiver(args.index), timeout_ms=args.timeout_ms)
+        current = read_snapshot(
+            _select_receiver(args.index),
+            include_keymap=bool(config.layers),
+            timeout_ms=args.timeout_ms,
+        )
         changes = plan_changes(config, current)
         if args.json:
             print(
@@ -213,7 +220,8 @@ def _run(args: argparse.Namespace) -> int:
         else:
             print("Dry-run: no settings written.")
             for change in changes:
-                print(f"{change.setting}: {change.before} -> {change.after}")
+                entry = change.to_dict()
+                print(f"{entry['setting']}: {entry['before']} -> {entry['after']}")
             if not changes:
                 print("No changes needed.")
         return 0

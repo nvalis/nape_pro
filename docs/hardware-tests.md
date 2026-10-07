@@ -23,7 +23,7 @@ uv run nape apply snapshots/dpi-stage-restore.json --write --backup snapshots/be
 uv run nape export snapshots/after-dpi-stage-restore.json
 ```
 
-The config, pre-write snapshots, and final export remain in local `snapshots/` (gitignored). The receiver was detached from WSL after the test, restoring Windows access.
+The config, pre-write snapshots, and final export remain in local `snapshots/` (gitignored). The receiver was detached from WSL after the test. It was previously **force-bound**, so Windows access still requires `usbipd unbind --busid 7-2` in Administrator PowerShell. This session's unbind attempt failed for lack of administrator privileges; detach alone does not restore force-bound devices.
 
 **What this establishes:** `A7 22 stage` changes the active DPI stage on this target; immediate read-back and restoration work. Each apply saved a new supported-state snapshot before its setter.
 
