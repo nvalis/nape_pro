@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
 from .protocol import NapeCommand, build_request, orientation_units
 from .receiver import receiver_info
+from .snapshot import read_snapshot
 from .transport import probe
 
 
@@ -66,6 +68,17 @@ def _parser() -> argparse.ArgumentParser:
     receiver_parser.add_argument("--index", type=int, help="collection index from `nape devices`")
     receiver_parser.add_argument("--timeout-ms", type=int, default=1500)
     receiver_parser.add_argument("--json", action="store_true", help="include raw reply packets")
+    status_parser = commands.add_parser("status", help="read Nape pointer settings and battery")
+    status_parser.add_argument("--json", action="store_true", help="include raw reply packets")
+    export_parser = commands.add_parser(
+        "export", help="save pointer settings and all nine keymap layers"
+    )
+    export_parser.add_argument(
+        "output", type=Path, help="new JSON snapshot file (never overwritten)"
+    )
+    for subparser in (status_parser, export_parser):
+        subparser.add_argument("--index", type=int, help="receiver Raw HID collection index")
+        subparser.add_argument("--timeout-ms", type=int, default=1500)
     return parser
 
 
@@ -81,6 +94,24 @@ def _device_record(device: dict[str, Any], index: int) -> dict[str, Any]:
         "interface_number": device.get("interface_number"),
         "path": path_text(device.get("path", "")),
     }
+
+
+def _select_receiver(index: int | None) -> dict[str, Any]:
+    devices = enumerate_devices()
+    if index is not None:
+        if not 0 <= index < len(devices):
+            raise ValueError("device index is out of range; run `nape devices` first")
+        return devices[index]
+    candidates = [
+        device
+        for device in devices
+        if device.get("product_id") == LINK_KM_PRODUCT_ID
+        and device.get("usage_page") == RAW_USAGE_PAGE
+        and device.get("usage") == 0x61
+    ]
+    if len(candidates) != 1:
+        raise ValueError("expected one Link-KM Raw HID collection; use --index to select")
+    return candidates[0]
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -120,24 +151,32 @@ def _run(args: argparse.Namespace) -> int:
         print(request.hex(" "))
         return 0
 
-    if args.command == "receiver-info":
-        devices = enumerate_devices()
-        if args.index is not None:
-            if not 0 <= args.index < len(devices):
-                raise ValueError("device index is out of range; run `nape devices` first")
-            selected = devices[args.index]
+    if args.command in ("status", "export"):
+        if args.command == "export" and args.output.exists():
+            raise FileExistsError(f"snapshot already exists: {args.output}")
+        result = read_snapshot(
+            _select_receiver(args.index),
+            include_keymap=args.command == "export",
+            timeout_ms=args.timeout_ms,
+        )
+        if args.command == "export":
+            with args.output.open("x", encoding="utf-8") as output:
+                output.write(json.dumps(result, indent=2) + "\n")
+            print(f"Saved pointer settings and {result['layer_count']} layers to {args.output}")
+        elif args.json:
+            print(json.dumps(result, indent=2))
         else:
-            candidates = [
-                device
-                for device in devices
-                if device.get("product_id") == LINK_KM_PRODUCT_ID
-                and device.get("usage_page") == RAW_USAGE_PAGE
-                and device.get("usage") == 0x61
-            ]
-            if len(candidates) != 1:
-                raise ValueError("expected one Link-KM Raw HID collection; use --index to select")
-            selected = candidates[0]
-        result = receiver_info(selected, timeout_ms=args.timeout_ms)
+            print(f"Firmware: {result['firmware']}")
+            print(f"Battery: {result['battery_percent']}% (charging: {result['charging']})")
+            print(f"Layer: {result['active_layer']} (zero-based; {result['layer_count']} layers)")
+            print(f"Orientation: {result['orientation']}°")
+            print(f"DPI: {result['dpi']} (stage {result['dpi_index']}, zero-based)")
+            print(f"DPI stages: {', '.join(map(str, result['dpi_values']))}")
+            print(f"Polling rate: {result['polling_rate']} Hz")
+        return 0
+
+    if args.command == "receiver-info":
+        result = receiver_info(_select_receiver(args.index), timeout_ms=args.timeout_ms)
         if args.json:
             print(json.dumps(result, indent=2))
         else:
