@@ -100,8 +100,9 @@ uv run nape plan examples/nape-two-layer-config.json
 ```
 
 Only after approving the diff, run `nape apply CONFIG --write --backup NEW_FILE`.
-The two-layer example sets explicit angles for layers 1 and 2 and creates combo 0 only when empty or already identical.
-It refuses to overwrite a different combo and does not delete unrelated slots.
+`examples/nape-two-layer-config.json` now captures all supported settings from the connected device, including all nine layers, with 90-degree angles on layers 1 and 2.
+It includes two tap-holds, explicit deletions for every empty action-record target, and sixteen empty macro slots.
+Applying it to a different state can delete records and replace the entire macro store; review the plan first.
 Layer and DPI-stage indices are zero-based.
 Button names are `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press`; dial directions are `ccw` and `cw`.
 Bindings use four-digit hex keycodes, not symbolic names or host shortcuts.

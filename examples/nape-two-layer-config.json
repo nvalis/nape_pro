@@ -1,47 +1,167 @@
 {
   "schema_version": 1,
   "active_layer": 1,
+  "dpi_index": 2,
+  "dpi_values": [400, 800, 1200, 2400, 4000],
+  "polling_rate": 1000,
+  "custom_dpi": 400,
+  "scroll_dpi": 400,
+  "dpi_stage_count": 3,
+  "sleep": {"backlight": 0, "sleep": 300, "magnet_scan": 0},
   "layers": [
+    {
+      "layer": 0,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x0000", "01": "0x00D4", "02": "0x0000", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
     {
       "layer": 1,
       "orientation": 90,
-      "buttons": {
-        "M1": "0x00D1",
-        "M2": "0x00D2",
-        "01": "0x00D3",
-        "02": "0x00D4",
-        "03": "0x5229",
-        "04": "0x00D5"
-      },
-      "dial": {
-        "ccw": "0x00D9",
-        "cw": "0x00DA"
-      }
+      "buttons": {"03": "0x7E29", "04": "0x00D5", "01": "0x00D3", "02": "0x00D4", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00D9", "cw": "0x00DA"}
     },
     {
       "layer": 2,
       "orientation": 90,
-      "buttons": {
-        "01": "0x7E2C",
-        "02": "0x7E27",
-        "03": "0x7E25",
-        "04": "0x7E28"
-      },
-      "dial": {
-        "ccw": "0x00AA",
-        "cw": "0x00A9"
-      }
+      "buttons": {"03": "0x7E29", "04": "0x0000", "01": "0x7E2C", "02": "0x7E2D", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 3,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 4,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 5,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 6,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 7,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
+    },
+    {
+      "layer": 8,
+      "orientation": 0,
+      "buttons": {"03": "0x522A", "04": "0x7E2B", "01": "0x00D4", "02": "0x7E2C", "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"},
+      "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
     }
   ],
+  "tap_holds": [
+    {"layer": 0, "button": "03", "delete": true},
+    {"layer": 0, "button": "04", "delete": true},
+    {"layer": 0, "button": "01", "delete": true},
+    {"layer": 0, "button": "02", "delete": true},
+    {"layer": 0, "button": "M1", "delete": true},
+    {"layer": 0, "button": "M2", "delete": true},
+    {"layer": 0, "button": "Press", "delete": true},
+    {"layer": 1, "button": "03", "tap": "0x0000", "held": "0x5222", "create": true},
+    {"layer": 1, "button": "04", "delete": true},
+    {"layer": 1, "button": "01", "delete": true},
+    {"layer": 1, "button": "02", "delete": true},
+    {"layer": 1, "button": "M1", "delete": true},
+    {"layer": 1, "button": "M2", "delete": true},
+    {"layer": 1, "button": "Press", "delete": true},
+    {"layer": 2, "button": "03", "tap": "0x0000", "held": "0x5221", "create": true},
+    {"layer": 2, "button": "04", "delete": true},
+    {"layer": 2, "button": "01", "delete": true},
+    {"layer": 2, "button": "02", "delete": true},
+    {"layer": 2, "button": "M1", "delete": true},
+    {"layer": 2, "button": "M2", "delete": true},
+    {"layer": 2, "button": "Press", "delete": true},
+    {"layer": 3, "button": "03", "delete": true},
+    {"layer": 3, "button": "04", "delete": true},
+    {"layer": 3, "button": "01", "delete": true},
+    {"layer": 3, "button": "02", "delete": true},
+    {"layer": 3, "button": "M1", "delete": true},
+    {"layer": 3, "button": "M2", "delete": true},
+    {"layer": 3, "button": "Press", "delete": true},
+    {"layer": 4, "button": "03", "delete": true},
+    {"layer": 4, "button": "04", "delete": true},
+    {"layer": 4, "button": "01", "delete": true},
+    {"layer": 4, "button": "02", "delete": true},
+    {"layer": 4, "button": "M1", "delete": true},
+    {"layer": 4, "button": "M2", "delete": true},
+    {"layer": 4, "button": "Press", "delete": true},
+    {"layer": 5, "button": "03", "delete": true},
+    {"layer": 5, "button": "04", "delete": true},
+    {"layer": 5, "button": "01", "delete": true},
+    {"layer": 5, "button": "02", "delete": true},
+    {"layer": 5, "button": "M1", "delete": true},
+    {"layer": 5, "button": "M2", "delete": true},
+    {"layer": 5, "button": "Press", "delete": true},
+    {"layer": 6, "button": "03", "delete": true},
+    {"layer": 6, "button": "04", "delete": true},
+    {"layer": 6, "button": "01", "delete": true},
+    {"layer": 6, "button": "02", "delete": true},
+    {"layer": 6, "button": "M1", "delete": true},
+    {"layer": 6, "button": "M2", "delete": true},
+    {"layer": 6, "button": "Press", "delete": true},
+    {"layer": 7, "button": "03", "delete": true},
+    {"layer": 7, "button": "04", "delete": true},
+    {"layer": 7, "button": "01", "delete": true},
+    {"layer": 7, "button": "02", "delete": true},
+    {"layer": 7, "button": "M1", "delete": true},
+    {"layer": 7, "button": "M2", "delete": true},
+    {"layer": 7, "button": "Press", "delete": true},
+    {"layer": 8, "button": "03", "delete": true},
+    {"layer": 8, "button": "04", "delete": true},
+    {"layer": 8, "button": "01", "delete": true},
+    {"layer": 8, "button": "02", "delete": true},
+    {"layer": 8, "button": "M1", "delete": true},
+    {"layer": 8, "button": "M2", "delete": true},
+    {"layer": 8, "button": "Press", "delete": true}
+  ],
   "combos": [
-    {
-      "index": 0,
-      "layer": 1,
-      "columns": 48,
-      "tap": "0x0000",
-      "held": "0x5222",
-      "timeout_ms": 200,
-      "create": true
-    }
-  ]
+    {"index": 0, "delete": true},
+    {"index": 1, "delete": true},
+    {"index": 2, "delete": true},
+    {"index": 3, "delete": true},
+    {"index": 4, "delete": true},
+    {"index": 5, "delete": true},
+    {"index": 6, "delete": true},
+    {"index": 7, "delete": true},
+    {"index": 8, "delete": true},
+    {"index": 9, "delete": true},
+    {"index": 10, "delete": true},
+    {"index": 11, "delete": true},
+    {"index": 12, "delete": true},
+    {"index": 13, "delete": true},
+    {"index": 14, "delete": true},
+    {"index": 15, "delete": true},
+    {"index": 16, "delete": true},
+    {"index": 17, "delete": true},
+    {"index": 18, "delete": true},
+    {"index": 19, "delete": true},
+    {"index": 20, "delete": true},
+    {"index": 21, "delete": true},
+    {"index": 22, "delete": true},
+    {"index": 23, "delete": true},
+    {"index": 24, "delete": true},
+    {"index": 25, "delete": true},
+    {"index": 26, "delete": true},
+    {"index": 27, "delete": true},
+    {"index": 28, "delete": true},
+    {"index": 29, "delete": true}
+  ],
+  "gesture": {"up": "0x0000", "down": "0x0000", "left": "0x0000", "right": "0x0000"},
+  "force_gesture_scroll": {"gesture": 0, "scroll": 0},
+  "macros": [[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []]
 }

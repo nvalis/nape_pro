@@ -44,7 +44,8 @@ The full export covers supported configuration, not installed flash or a whole-d
    Preserve omitted bindings and do not invent combo masks or shifted layer labels.
 3. Write a partial JSON config, then run `validate` and `plan --json` or `apply --dry-run`.
    Show the real diff and disclose unverified setter behavior and persistence.
-   The retained examples are [device settings](../examples/firmware-130-config.json) and [two-layer layout](../examples/nape-two-layer-config.json), not guaranteed preferences or factory defaults.
+   The retained examples are [device settings](../examples/firmware-130-config.json) and [full device configuration](../examples/nape-two-layer-config.json), not guaranteed preferences or factory defaults.
+   The full config includes empty-record deletions and complete macro replacement.
 4. Obtain approval for the exact diff before `apply --write --backup NEW_FILE`.
    Receiver writes require only Nape `3434:4004` awake in slot 0; both transports require firmware `v1.3.0-ZK`.
    Never bypass guards with raw packets.

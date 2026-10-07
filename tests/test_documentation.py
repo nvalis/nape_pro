@@ -36,16 +36,36 @@ def test_local_documentation_links_exist(path: Path) -> None:
         assert (path.parent / relative_path).is_file(), f"{path.name}: {target}"
 
 
-def test_retained_examples_are_130_settings_and_two_layer_layout() -> None:
+def test_retained_examples_are_130_settings_and_full_device_config() -> None:
     assert {path.name for path in EXAMPLES} == {
         "firmware-130-config.json",
         "nape-two-layer-config.json",
     }
     layout = load_config(ROOT / "examples" / "nape-two-layer-config.json")
     assert layout.orientation is None and layout.active_layer == 1
-    assert [(layer.layer, layer.orientation) for layer in layout.layers] == [(1, 90), (2, 90)]
-    assert len(layout.combos) == 1 and layout.combos[0].create
-    assert not any(combo.delete for combo in layout.combos)
+    assert [(layer.layer, layer.orientation) for layer in layout.layers] == [
+        (layer, 90 if layer in (1, 2) else 0) for layer in range(9)
+    ]
+    assert all(len(layer.buttons) == 7 and len(layer.dial) == 2 for layer in layout.layers)
+    assert len(layout.tap_holds) == 63
+    assert [
+        (entry.layer, entry.button, entry.tap, entry.held, entry.create)
+        for entry in layout.tap_holds
+        if not entry.delete
+    ] == [
+        (1, "03", 0, 0x5222, True),
+        (2, "03", 0, 0x5221, True),
+    ]
+    assert [combo.index for combo in layout.combos] == list(range(30))
+    assert all(combo.delete for combo in layout.combos)
+    assert layout.macros == ((),) * 16
+    assert layout.dpi_values == (400, 800, 1200, 2400, 4000)
+    assert layout.dpi_index == 2 and layout.dpi_stage_count == 3
+    assert layout.custom_dpi == 400 and layout.scroll_dpi == 400
+    assert layout.polling_rate == 1000
+    assert dict(layout.sleep) == {"backlight": 0, "sleep": 300, "magnet_scan": 0}
+    assert dict(layout.gesture) == {"up": 0, "down": 0, "left": 0, "right": 0}
+    assert dict(layout.force_gesture_scroll) == {"gesture": 0, "scroll": 0}
 
 
 def test_vertical_scroll_browser_back_recipe_has_expected_bindings() -> None:

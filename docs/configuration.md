@@ -44,7 +44,8 @@ Offline validation cannot check supported polling rates or current record occupa
 }
 ```
 
-See [`examples/firmware-130-config.json`](../examples/firmware-130-config.json) for device settings and [`examples/nape-two-layer-config.json`](../examples/nape-two-layer-config.json) for a two-layer layout.
+See [`examples/firmware-130-config.json`](../examples/firmware-130-config.json) for device settings and [`examples/nape-two-layer-config.json`](../examples/nape-two-layer-config.json) for the connected device's full apply-ready configuration.
+Despite its filename, the latter includes all nine layers, empty-record deletions, and complete macro replacement.
 Examples are not recommended preferences or guaranteed factory defaults.
 
 ## DPI and sleep
