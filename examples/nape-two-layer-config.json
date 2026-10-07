@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "active_layer": 0,
+  "orientation": 90,
+  "layers": [
+    {
+      "layer": 0,
+      "buttons": {
+        "M1": "0x00D1",
+        "M2": "0x00D2",
+        "01": "0x00D3",
+        "02": "0x00D4",
+        "03": "0x5229",
+        "04": "0x00D5"
+      },
+      "dial": {
+        "ccw": "0x00D9",
+        "cw": "0x00DA"
+      }
+    },
+    {
+      "layer": 1,
+      "buttons": {
+        "01": "0x7E2C",
+        "02": "0x7E27",
+        "03": "0x7E25",
+        "04": "0x7E28"
+      },
+      "dial": {
+        "ccw": "0x0000",
+        "cw": "0x0000"
+      }
+    }
+  ],
+  "combos": [
+    {
+      "index": 0,
+      "layer": 0,
+      "columns": 48,
+      "tap": "0x0000",
+      "held": "0x5221",
+      "timeout_ms": 200
+    },
+    {
+      "index": 1,
+      "layer": 1,
+      "columns": 48,
+      "tap": "0x0000",
+      "held": "0x5221",
+      "timeout_ms": 200
+    }
+  ]
+}
