@@ -1,67 +1,98 @@
-# Agent guide: working with a Nape Pro
+# Agent guide
 
-**Current CLI: 0.3.0.** Available configuration families have hardware storage/read-back coverage on Nape firmware `v1.1.6-ZK`; see the [current hardware matrix](hardware-tests.md) for exact scope. Custom DPI, stage count and per-layer orientation cannot be read reliably and targeted writes are blocked. Combo deletion/empty-slot creation, physical action execution and reboot persistence remain unverified. Profiles, YAML and symbolic JSON binding inputs are unsupported. Use the [named-action catalog](action-catalog.md) to translate intent into numeric keycodes without guessing.
+Only Nape firmware `v1.3.0-ZK` is supported.
+Core and advanced reads, all user-layer angles, complete record export, and dry-run planning passed on the connected device through the receiver.
+Configuration setters, physical effects, and reboot persistence still need hardware verification.
+See the [hardware matrix](hardware-tests.md), [1.3.0 guide](firmware-1.3.0.md), and [configuration guide](configuration.md).
 
-`apply` defaults to dry-run; writes require explicit `--write` and a new `--backup` path. Editing an export does not change the device. Macro replacement resets the entire store and is not atomic. Failures may leave partial state; no automatic retry or rollback is performed. Intermittent transport timeouts remain unresolved.
+`apply` defaults to dry-run.
+Writes require explicit approval for the exact changes, `--write`, and a new `--backup` path.
+A request to inspect, implement, test, commit, or push the CLI is not permission to change device settings.
+Macro replacement resets the entire store; failures can leave partial state and never trigger automatic retries or rollback.
+Profiles, YAML, and symbolic JSON binding inputs are unsupported.
+Use the [action catalog](action-catalog.md) rather than guessing numeric codes.
 
-See the [configuration guide](configuration.md) for the JSON schema, write guards, and failure recovery; the [CLI/settings reference](cli-reference.md) for every command/field; and the [protocol reference](protocol-reference.md) for implementation status.
-
-## Normal workflow
-
-Run from this repository; use `uv` for Python and CLI execution:
+## Inspect first
 
 ```sh
 uv sync --extra hardware
 uv run nape devices --json
+# Receiver-only diagnostics; skip for direct USB:
 uv run nape receiver-info --json
-uv run nape status --json
-uv run nape export nape-before.json
+uv run nape status --advanced --records --layer-orientations --json
+uv run nape export nape-before.json --advanced --records --layer-orientations
 ```
 
-- Tested transport: Nape in **2.4 GHz mode**, awake, through Link-KM receiver `3434:D026`.
-- Configuration channel: usage page **`0xFF60`**, usage **`0x61`**. Do not use its normal keyboard/mouse interfaces.
-- `receiver-info`, `status`, `export`, `plan`, and `apply` select one receiver automatically. For multiple receivers, pass `--index N` using a fresh **default** `nape devices` listing, not `devices --all`.
-- JSON IDs are decimal: receiver VID/PID `13364`/`53286`, Raw HID usage page/usage `65376`/`97`.
-- Keep the device stationary while exporting; reads are not an atomic snapshot.
-- Export refuses to overwrite files and does not create parent directories. Use a new filename in an existing directory.
+The supported configuration collection is `FF60:61`, on receiver `3434:D026` or USB Nape `3434:0440`.
+Do not use normal keyboard/mouse collections or the numbered bridge channel.
+With multiple configuration candidates, pass an index from a fresh default `nape devices` listing, not `devices --all`.
+Indices identify collections, not receiver slots or USB interface numbers.
+Receiver diagnostics select only a receiver and can work while the Nape is asleep.
+Wireless configuration needs the Nape awake in 2.4 GHz mode.
 
-## Handling a request to configure
+JSON VID/PID values are decimal: receiver `13364/53286`, USB Nape `13364/1088`, usage page/usage `65376/97`.
+Keep the device stationary and close other configurators.
+Reads are not atomic and exports never overwrite files or create parent directories.
+The full export covers supported configuration, not installed flash or a whole-device restore format.
 
-1. Read status and export the current state before proposing changes.
-2. Translate the request using the [action catalog and recipes](action-catalog.md). Confirm the target wire layer and physical control, distinguish dial scrolling from trackball scroll mode, and momentary holds from active-layer switches/toggles. For browser Back, disclose mouse Back versus a consumer action or OS shortcut. Write a partial JSON config using four-digit hex keycodes and explicit combo indices; omitted bindings are preserved. Stop and explain unresolved combo-mask/layer-label semantics rather than inventing them. Macro lists/buffers replace the entire store, not just mentioned slots.
-3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose which setters lack hardware tests and that reboot persistence remains unverified.
-4. Obtain explicit user approval for the exact changes before `nape apply CONFIG --write --backup NEW_FILE`. Do not treat a generic request to inspect/build/test the CLI as permission to alter settings. Write guards require the observed firmware/slot combination; do not bypass them with raw packets.
-5. Apply verifies all pointer fields and the complete expected keymap, including preserved entries, plus any requested active layer, targeted advanced entries, gesture/scroll settings, and the preserved secondary polling index. For an active-layer-only switch, it does not compare the context-dependent orientation readout with the previous layer. Device-setting configs read/preserve all custom-DPI/count/sleep fields; macro configs back up and verify the full buffer. Disclose the destructive macro-reset phase explicitly before obtaining write approval. All record-read timeouts abort, even for create/delete targets. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
+## Configure only after approval
 
-6. Ask the user to run the catalog's physical acceptance checks for the requested behavior, especially combo releases and tap-versus-hold activation. Report storage verification separately from runtime success; do not claim reboot persistence without a power-cycle check.
+1. Read status and export current state.
+2. Translate intent with the action catalog.
+   Confirm the wire layer and physical control, dial versus trackball scrolling, and momentary holds versus default-layer switching.
+   Snapshots separate effective `active_layer` from `default_layer`; the existing `active_layer` config field sets the default.
+   Preserve omitted bindings and do not invent combo masks or shifted layer labels.
+3. Write a partial JSON config, then run `validate` and `plan --json` or `apply --dry-run`.
+   Show the real diff and disclose unverified setter behavior and persistence.
+   The retained examples are [device settings](../examples/firmware-130-config.json) and [two-layer layout](../examples/nape-two-layer-config.json), not guaranteed preferences or factory defaults.
+4. Obtain approval for the exact diff before `apply --write --backup NEW_FILE`.
+   Receiver writes require only Nape `3434:4004` awake in slot 0; both transports require firmware `v1.3.0-ZK`.
+   Never bypass guards with raw packets.
+5. Apply backs up every supported configuration family before setters and checks preserved state afterward.
+   Combo deletion compacts the table, so config indices refer to the original snapshot and deletions run in descending order.
+   Creation requires a confirmed empty record or an already identical record; timeouts never establish absence.
+   Disclose macro reset before approval because macros replace the complete store.
+6. After a failure, stop and preserve the backup and error.
+   Inspect current state before proposing recovery, never blindly retry or finalize a partial macro transfer.
+7. Ask the user to run physical acceptance checks for the requested behavior.
+   Report immediate storage read-back separately from action execution and power-cycle persistence.
+   Zero status does not prove saving succeeded.
 
-A standard export covers pointer settings, seven button entries per layer, and two dial directions across nine layers. `export --advanced` adds custom DPI, stage count, sleep, gestures, force-scroll fields, decoded macro slots, and the raw VIA buffer. Tap-holds/combos are read only for configured targets. Per-layer orientation uses a separate flag and currently fails on tested firmware. Exports remain **incomplete backups**: profiles are unavailable, and there is no whole-device restore command.
+Switch layers and set global orientation in separate applies.
+Per-layer angles and five-stage limits come from the firmware contract.
+No bulk record deletion, profiles, flashing, factory reset, or pairing commands are exposed.
 
 ## Connection problems
 
 | Symptom | Next step |
 |---|---|
-| No interfaces / JSON `[]` | Check receiver connection; in WSL check USB attachment, not just sharing. Discovery can exit successfully with no devices. |
-| `open failed` | Check permissions on the selected `/dev/hidraw*` node; request narrowly scoped access, not access to all devices. |
-| No paired device awake | Ask the user to wake the Nape and check 2.4 GHz mode. |
-| Unexpected layer count or invalid fields | Stop: the firmware/device may differ from the tested Nape. Keep raw JSON for investigation. |
-| Timeout | Check connection first and inspect state after a failed write. Hardware tests saw intermittent macro-read/reset and receiver-state timeouts, even at 5000 ms; increasing `--timeout-ms` is not a guaranteed fix. Do not run concurrent queries or automatically retry low-level requests: replies have no transaction IDs. |
+| No interfaces or `[]` | Check connection; in WSL check attachment, not just sharing |
+| Open failed | Check the selected path and request permissions only for that node |
+| No paired device awake | Ask the user to wake the Nape and check 2.4 GHz mode |
+| Unsupported firmware | Stop; only `v1.3.0-ZK` is supported, with no override |
+| Invalid fields or layer count | Stop and preserve evidence; do not infer defaults |
+| Timeout | Check connection and inspect state after failed writes; do not retry automatically or run concurrent queries |
 
-For WSL, run in Windows PowerShell after checking `usbipd list`:
+On Linux, after discovering the current path, temporary access can be granted with `sudo setfacl -m u:$(id -un):rw /dev/hidrawN`.
+Permissions can reset on reconnection.
+For WSL, obtain permission before attaching because it takes the device away from Windows:
 
 ```powershell
 usbipd attach --wsl --busid <busid>
-# Detach when finished:
 usbipd detach --busid <busid>
-# If force-bound, also run in Administrator PowerShell to restore Windows access:
+# If force-bound, also restore Windows access in Administrator PowerShell:
 usbipd unbind --busid <busid>
 ```
 
-Attaching takes the receiver away from Windows. Obtain permission before doing this. Binding/force-binding and unbinding require Administrator PowerShell; force-binding prevents Windows use even after detach. Do not assume the bus ID stays constant. Linux device permissions may reset after reconnection.
+Check `usbipd list` rather than assuming a stable bus ID.
+Sharing alone is not attachment, and detach alone does not undo force-binding.
 
-## When extending the CLI
+## Development
 
-Keep read and write paths separate. Preserve validated inputs, visible diff/dry-run, explicit approval, pre-write snapshot, and read-back checks when adding setters. Unknown settings must remain untouched; unsupported rollback must be disclosed. Extend hardware support only after targeted verification. Commit implementation in logical blocks and run:
+Keep getters and setters separate.
+Preserve validation, visible diffs, explicit approval, complete backups, and full read-back checks.
+Keep static binary evidence distinct from device verification.
+Commit changes in logical blocks and run:
 
 ```sh
 uv sync --extra dev --extra hardware

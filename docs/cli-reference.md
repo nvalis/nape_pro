@@ -1,135 +1,129 @@
 # CLI and settings reference
 
-Scope: `nape-cli` **0.3.0**, Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. See the [current hardware matrix](hardware-tests.md) for storage/read-back coverage and blocked features. Physical actions, reboot persistence, combo deletion and empty-slot creation remain unverified. Use the [named-action catalog](action-catalog.md) for protocol-12 keycode lookup and request translation. `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
+Only Nape firmware `v1.3.0-ZK` is supported, including its optional build timestamp.
+The CLI checks the firmware token before configuration reads and refuses every other version.
+Supported transports are Link-KM `3434:D026` and direct USB Nape `3434:0440`, using `FF60:61` Raw HID.
+Bluetooth is not implemented.
+See the [hardware matrix](hardware-tests.md) for completed device checks and the [1.3.0 guide](firmware-1.3.0.md) for packet-derived limits.
+Configuration setters, most physical effects, and reboot persistence remain unverified on hardware.
 
-## Complete CLI command list
+## Commands
 
-Prefix every command below with `uv run` from the repository. Global flags: `nape --help` (`-h`), `nape --version`. Every subcommand also supports `--help` (`-h`).
+Prefix commands with `uv run` from the repository.
+Global options are `nape --help`, `nape -h`, and `nape --version`.
+Every subcommand also accepts `--help` and `-h`.
 
-| Command | Purpose | Options / defaults |
+| Command | Purpose | Options |
 |---|---|---|
-| `nape devices` | List relevant Keychron HID collections | `--json`: JSON array; `--all`: all collections with VID `0x3434` |
-| `nape receiver-info` | Read receiver protocol, firmware, paired slots | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: include raw packets |
-| `nape status` | Read Nape pointer settings and battery | `--advanced` also reads custom DPI, stage count, sleep, gestures, force-scroll, and macros; `--index N`; `--timeout-ms 1500`; `--json` |
-| `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--advanced` reads custom DPI, stage count, sleep, gestures, force-scroll, and macros; `--layer-orientations` separately attempts `GET_LAYER_ORI`; `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
-| `nape validate CONFIG` | Validate pointer/keymap, layer, tap-hold, combo, gesture, force-scroll, and macro config offline | Required config path; `--json`: normalized config |
-| `nape plan CONFIG` | Read current settings/bindings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
-| `nape apply CONFIG` | Dry-run by default; optionally apply Launcher-defined settings and advanced actions | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
-| `nape protocol get-orientation` | Print a zero-padded `A7 20` payload; send nothing | No required options |
-| `nape protocol get-dpi` | Print an `A7 21` payload; send nothing | No required options |
-| `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; **does not set orientation** | `--angle` required, one of `0,45,90,135,180,225,270,315` |
-| `nape probe --index N` | Experimental raw read query for a direct mouse collection | `--command orientation` or `dpi` (default `orientation`); `--report-id 0`; `--timeout-ms 1000` |
+| `nape devices` | List relevant Keychron HID collections | `--json`; `--all` for every collection with VID `3434` |
+| `nape receiver-info` | Read receiver protocol, firmware, and paired slots | `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape status` | Read pointer settings, effective/default layers, and battery | `--advanced`; `--layer-orientations`; `--records`; `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape export OUTPUT` | Read settings and all nine keymaps into a new JSON file | Same read flags as status; no overwrite flag |
+| `nape validate CONFIG` | Validate a partial config offline | `--json` for normalized config |
+| `nape plan CONFIG` | Read state and preview changes; no writes | `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape apply CONFIG` | Dry-run by default; optionally apply approved changes | `--write` or `--dry-run`; `--backup NEW_FILE` required with write; `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape protocol get-orientation` | Print `A7 20`; send nothing | None required |
+| `nape protocol get-dpi` | Print `A7 21`; send nothing | None required |
+| `nape protocol get-default-layer` | Print `A7 35`; send nothing | None required |
+| `nape protocol get-custom-dpi` | Print `A7 36`; send nothing | None required |
+| `nape protocol get-scroll-dpi` | Print `A7 3A`; send nothing | None required |
+| `nape protocol get-dpi-stage-count` | Print `A7 3C`; send nothing | None required |
+| `nape protocol get-layer-orientation --layer N` | Print `A7 38 N`; send nothing | Layer required in `0..8` |
+| `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; does not set orientation | Angle required, `0..315` in 45-degree steps |
+| `nape probe --index N` | Experimental raw read for another direct mouse collection | `--command orientation` or `dpi`; `--report-id 0`; `--timeout-ms 1000` |
 
-`protocol` accepts `--angle`, but only uses it for `set-orientation`. Its printed warning is conservative: direct-device framing remains unverified even though receiver reads have worked.
+`protocol` never opens hardware.
+Its previews show encoding, not completed device tests.
+`probe` is not the normal USB Nape/receiver workflow.
 
-### Selection and errors
+## Read flags and selection
 
-- `--index` is a non-negative, zero-based **collection** index from a fresh default `nape devices` listing. Enumeration order can change; do not reuse indices from `devices --all`.
-- Multiple collections may share a path; interface numbers and indices are not interchangeable.
-- Receiver commands auto-select exactly one `3434:D026`, `FF60:61` collection. They validate explicit selections too. Zero or multiple auto-selection candidates produce an error.
-- `status`/`export` require a connected paired slot and exactly nine reported layers. Receiver diagnostics can work while the Nape is asleep.
-- Timeouts are positive milliseconds **per request**, not a total command duration. Status makes 13 requests; standard export makes 40. Advanced export adds custom-DPI/count/sleep reads, gesture/scroll reads, and macro metadata/buffer reads (number depends on buffer size). On tested firmware the custom-DPI/count replies echo the query and are reported as unavailable; sleep reads successfully. Layer-orientation queries are separate and fail safely on tested firmware.
-- `probe` requires a mouse usage page `FFC1` or `FF0A`, rejects Link-KM `D026`, and is not the normal receiver workflow. Report IDs accept decimal or `0x` notation, range `0..255`. It prints raw bytes and can return success with no response.
-- Normal success exits `0`; handled argument/device/file errors exit `2` and write an error to stderr. An empty discovery list is still success. Help/version exit `0`.
+`--advanced` adds custom DPI, scroll-mode DPI, enabled-stage count, sleep, gestures, force-scroll, macro metadata, decoded slots, and all raw macro bytes.
+`--layer-orientations` adds nine user-layer angles.
+`--records` scans 30 combo indices and 63 row-0 layer/button tap-hold targets.
+Use all three flags with export to capture every supported configuration family.
 
-The [configuration guide](configuration.md) describes the separate partial-config schema, write guardrails, result JSON, and recovery. Config files are not exported snapshots. Offline validation does not check the connected device's rate support. Apply preview never creates a backup; a write-mode no-op also creates none.
+`--index` is a nonnegative collection index from a fresh default `nape devices` listing.
+Enumeration order can change; do not reuse indices from `devices --all`.
+Collections can share a path, and interface numbers are not indices.
+One configuration candidate is selected automatically; multiple candidates require an explicit index.
+`receiver-info` selects only a receiver.
+USB skips receiver-state queries.
+Receiver configuration reads require an awake paired Nape, while receiver diagnostics can work with it asleep.
 
-## Available settings and observations
+Timeouts are positive milliseconds per request, not per command.
+Standard receiver status makes 14 requests; standard export adds 27 keymap/encoder reads.
+USB makes one fewer request by skipping `B2`.
+Layer angles add nine requests, records add 93, and macro request counts depend on buffer size.
+Keep the Nape stationary and awake, close Launcher, and run commands serially.
 
-`status --json` and standard `export` contain the same core fields, except that only export includes `layers`. Advanced export adds `custom_dpi`, `dpi_stage_count`, `sleep`, `gesture`, `force_gesture_scroll`, macro metadata, decoded `macros`, and the raw `macro_buffer`. **`orientation`, `active_layer`, `dpi_index`, `dpi_values`, `polling_rate`, partial `layers`, `tap_holds`, `combos`, `gesture`, and `force_gesture_scroll`** are accepted config inputs for guarded apply. `custom_dpi`, `dpi_stage_count`, partial `sleep`, and full `macros` or `macro_buffer` replacements are also supported by guarded apply. Sleep and complete macro storage replacement/restoration are hardware-tested; custom DPI and stage count remain unavailable on tested firmware. Macro writes reset the complete store after backing it up; interrupted transfers may leave it empty or invalid. Profile selection is not supported. See [Launcher source verification](launcher-verification.md).
+Normal success exits 0.
+Handled argument, device, and file errors exit 2 and print to stderr.
+An empty discovery list is still success.
+`probe` prints raw data and can succeed with no response.
+Its collection pages are `FFC1` or `FF0A`; it refuses Link-KM.
 
-| JSON field | Meaning / domain | Notes |
-|---|---|---|
-| `schema_version` | Snapshot schema, currently integer `1` | Metadata, not a firmware setting |
-| `transport` | `"link-km-raw-hid"` | Metadata |
-| `firmware` | Nape firmware/build string | Not the receiver firmware |
-| `layer_count` | Integer `9` on tested firmware | Current reader rejects other counts |
-| `active_layer` | Layer index `0..8` | Unchanged wire index, matching Launcher `A3`/`A7 2D`; set/restore hardware-tested. The tested firmware omits the `A7 2D` ACK, so apply verifies by read-back; switching layers also changes the `A7 20` angle readout |
-| `orientation` | Reported angle, degrees `0..315` in steps of `45` | Set/restore hardware-tested. The readout changed with active layer on tested firmware (`90°` on layer 1, `0°` on layer 2); this does not establish per-layer orientation support |
-| `dpi_index` | Active DPI-stage index `0..4` | Different from a mouse profile or keymap layer |
-| `dpi_values` | Five integer DPI values ordered by stage | Read as unsigned 16-bit LE values; valid write range/step not established |
-| `dpi` | `dpi_values[dpi_index]` | Derived value |
-| `custom_dpi` | Separate custom-DPI value (LE16), or `null` when unavailable | Advanced/targeted reads; write range `1..65535` is an encoding limit, not a sensor specification. The tested firmware echoes the zero-padded query, so this is `null` and cannot be planned/written |
-| `dpi_stage_count` | Enabled cycling count `1..5`, or `null` when unavailable | Advanced/targeted reads; five stored values are retained; a selected stage must remain enabled. The tested firmware echoes the zero-padded query, so this is `null` and cannot be planned/written |
-| `sleep` | Raw `backlight`, `sleep`, `magnet_scan` unsigned 16-bit fields | Advanced/targeted reads; partial config merges/preserves other fields; units/zero semantics unverified |
-| `battery_percent` | Integer `0..100` | Device status, not configurable |
-| `charging` | Boolean | Device status |
-| `polling_rate` | Current rate in Hz | Decode table: `8000,4000,2000,1000,500,250,125`; this does not imply support for every rate |
-| `supported_polling_rates` | List of rates reported by the device | Use this list, not the full decode table, when proposing a rate |
-| `polling_rate_for_fr_index` | Raw secondary polling index (byte `11`) | Preserved by primary polling writes and checked on every apply read-back; not a config input |
-| `polling_rate_for_fr`, `supported_polling_rates_for_fr` | Secondary rate in Hz (or null when bitmap is zero), and supported rates | Launcher-derived decoding of bytes `11/10`; physical semantics remain unverified |
-| `layers` | Nine keymap objects; export only | `--layer-orientations` attempts to add per-layer `orientation`; tested firmware echoes the layer index so this fails safely |
-| `gesture`, `force_gesture_scroll` | Four 16-bit directional actions and two raw mode bytes | Advanced export; set/restore storage read-back hardware-tested; physical behavior remains unverified |
-| `via_protocol_version`, `macro_count`, `macro_buffer_size`, `macro_buffer`, `macros` | VIA version, slot count, capacity, raw hex, and decoded Launcher-style steps | Advanced export; structured `macros` or raw `macro_buffer` may be applied as full replacements (mutually exclusive); last byte must be zero; incomplete buffers fail decoding |
-| `tap_holds`, `combos` | Targeted action records | Not bulk-exported; requested target entries are read during plan/apply |
-| `raw` | Request hex → full reply hex | Diagnostic evidence, not configuration to apply |
+## Snapshot fields
 
-Observed example, **not a prescribed configuration or guaranteed factory default**: orientation `90`, stage `2`, DPI stages `[450,800,1600,3200,4000]`, active DPI `1600`, polling rate `1000`, reported supported rates `[1000,500,125]`.
-
-### Keymap objects
-
-Each `layers` entry contains:
-
-| Field | Shape |
-|---|---|
-| `layer` | Integer index `0..8` |
-| `buttons` | Map of `03`, `04`, `01`, `02`, `M1`, `M2`, `Press` → `"0xNNNN"` keycodes |
-| `dial` | Map of `ccw`, `cw` → `"0xNNNN"` keycodes |
-
-The seven button names correspond to wire columns `0..6` in that order, row `0`. `Press` is the dial's push-button entry; rotations are read separately from encoder `0`, direction `0` = `ccw`, `1` = `cw`.
-
-Keycodes are unsigned 16-bit firmware codes formatted as hex strings. They may encode mouse actions, keyboard actions, layers, or custom behaviors; the CLI does not accept symbolic binding inputs or validate which codes this firmware executes. The [action catalog](action-catalog.md) supplies named reference mappings to numeric codes. Do not treat an arbitrary 16-bit integer as a valid binding or assume a shortcut such as `ctrl+c` is accepted as input.
-
-Example shape (one layer only, abbreviated; **not an importable config**):
-
-```json
-{
-  "layer": 0,
-  "buttons": {
-    "03": "0x522A", "04": "0x0000", "01": "0x00D4", "02": "0x0000",
-    "M1": "0x00D1", "M2": "0x00D2", "Press": "0x522B"
-  },
-  "dial": {"ccw": "0x00AA", "cw": "0x00A9"}
-}
-```
-
-Exports are not atomic or complete backups and cannot be applied wholesale. `export --advanced` includes gesture/force-scroll and macro state; tap-holds and combos are read only for explicit targets. Per-layer orientation export is separate and currently fails on tested firmware.
-
-## Other JSON outputs
-
-### `devices --json`
-
-An array of records, including when empty (`[]`):
-
-| Fields | Meaning |
-|---|---|
-| `index` | Current collection index for selection |
-| `vendor_id`, `product_id` | Integer USB IDs |
-| `product_string`, `manufacturer_string` | Device-reported labels; may be empty/unavailable |
-| `usage_page`, `usage` | Integer collection identifiers; may be unknown (`0`) with some backends |
-| `interface_number` | USB interface number |
-| `path` | Host/backend-specific path string |
-
-### `receiver-info --json`
+Snapshots are not configs or flash backups and cannot be applied wholesale.
+They include raw replies for auditing.
+Reads are not atomic, and no whole-snapshot restore command exists.
 
 | Field | Meaning |
 |---|---|
-| `protocol_version` | Integer receiver protocol version; observed `2` |
-| `feature_bytes` | Raw hex feature bytes; observed `"0b 00"`, not decoded |
-| `firmware` | Receiver firmware/build string |
-| `slots` | Three objects with `slot`, `vendor_id`, `product_id`, `status`, `connected` |
-| `raw` | Named hex replies: `version`, `state`, `firmware` |
+| `schema_version` | Snapshot schema 1 |
+| `transport` | `link-km-raw-hid` or `usb-raw-hid` |
+| `firmware` | Nape version/build string, not receiver firmware |
+| `capabilities` | Implemented operations and firmware limits, not completed hardware tests |
+| `layer_count` | Nine user keymap layers |
+| `active_layer` | Effective wire layer from `A3`; user layers `0..8`, firmware internal layers may differ |
+| `default_layer` | Default layer from `A7 35`; can differ during a held layer action; not a config field |
+| `orientation` | Effective angle in degrees, `0..315` in 45-degree steps |
+| `dpi_index` | Selected stored stage, `0..4` |
+| `dpi_values` | Five unsigned LE16 stored DPI values |
+| `dpi` | Derived `dpi_values[dpi_index]` |
+| `custom_dpi` | Separate custom DPI, `400..4000`; advanced/targeted reads |
+| `scroll_dpi` | Scroll-mode DPI candidate, `40..4000`; physical effect unverified |
+| `dpi_stage_count` | Enabled cycling count, `1..5`; selection configs also read it |
+| `sleep` | Raw unsigned 16-bit `backlight`, `sleep`, and `magnet_scan` fields; units and zero semantics unverified |
+| `battery_percent`, `charging` | Battery percentage and charging boolean; not configurable |
+| `polling_rate`, `supported_polling_rates` | Current Hz and device-advertised supported rates |
+| `polling_rate_for_fr_index` | Raw secondary polling index; preserved and verified by apply, not a config input |
+| `polling_rate_for_fr`, `supported_polling_rates_for_fr` | Secondary rate and capabilities; physical meaning unverified |
+| `layers` | Nine keymap objects, optionally including angles |
+| `layer_orientations` | Angle list when status reads angles without keymaps |
+| `gesture` | Four 16-bit directional actions |
+| `force_gesture_scroll` | Raw gesture/scroll mode values, each `0..15` |
+| `via_protocol_version`, `macro_count`, `macro_buffer_size` | Macro protocol, slot count, and capacity |
+| `macro_buffer`, `macros` | Complete raw hex macro bytes and decoded steps |
+| `tap_holds`, `combos` | Target-keyed records, with `null` for absence |
+| `record_inventory` | `true` when all accessible record targets were queried |
+| `raw` | Request hex mapped to full response hex |
 
-Slots use indices `0..2`; `connected` means status byte equals `1`. Empty slots typically have zero IDs/status. Do not confuse slots with Nape layers or DPI stages. The CLI does not expose receiver pairing/unpairing or target-slot selection.
+Each keymap layer has `layer`, `buttons`, and `dial` fields.
+Buttons map `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press` to four-digit hex keycodes.
+These names correspond to wire columns `0..6`, row 0.
+`Press` is the dial push button; dial rotations use `ccw` and `cw`.
+Encoder 0 directions are 0 for CCW and 1 for CW.
 
-## Known features not exposed by this CLI
+Keycodes are firmware action codes, not host shortcuts or arbitrary valid actions.
+Use the [action catalog](action-catalog.md) to translate intent into numeric bindings.
+The [configuration guide](configuration.md) lists accepted partial inputs, write guards, and recovery.
 
-These are protocol/source findings, **not guarantees that this firmware supports them**. Profile selection remains unimplemented because the deployed Launcher bundle contains command IDs but no profile operation or payload usage. Command IDs are in the [protocol reference](protocol-reference.md).
+## Other JSON outputs
 
-| Feature | Meaning |
-|---|---|
-| Mouse profiles | Profile selection; distinct from DPI stages and keymap layers. Launcher has no `GET/SET_PROFILE` operation |
-| Battery-report configuration | Reporting behavior; not battery percentage itself |
-| Factory reset / firmware / pairing | Not exposed; deliberately outside CLI scope |
+`devices --json` is an array, including when empty.
+Entries include `index`, integer `vendor_id`/`product_id`, reported labels, integer `usage_page`/`usage`, `interface_number`, and backend-specific `path`.
+Usage metadata can be unknown on some backends.
 
-The official trackball code also exposes custom DPI (`A7 36/37`), DPI gear count (`A7 3C/3D`), and sleep (`A7 0B/0C`) operations. The CLI implements these for advanced/targeted reads and guarded apply; sleep reads work on tested hardware, while custom-DPI and gear-count queries echo their requests and their setters remain unverified. Debounce, lift-off distance, motion sync, lighting, haptics, and other generic Keychron mouse settings have **not** been established as Nape Pro features here. Do not advertise them based on a different mouse's protocol. Firmware flashing, factory reset, and bootloader commands are also outside this CLI's scope.
+`receiver-info --json` includes receiver `protocol_version`, raw `feature_bytes`, receiver `firmware`, three paired `slots`, and `raw` replies.
+Each slot has `slot`, `vendor_id`, `product_id`, `status`, and `connected`.
+Connected means status equals 1; slot indices are `0..2` and are not Nape layers or DPI stages.
+The CLI does not expose pairing, unpairing, or target-slot selection.
+
+## Deliberately unexposed
+
+Profile requests and host battery-report configuration are no-ops in the analyzed image.
+Bulk record deletion, firmware flashing, bootloader, pairing, and factory reset are outside configuration scope.
+No debounce, lift-off distance, motion sync, lighting, or haptics support is established for this Nape.
+Do not infer support from another Keychron mouse or an enum name.

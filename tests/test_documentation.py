@@ -36,11 +36,22 @@ def test_local_documentation_links_exist(path: Path) -> None:
         assert (path.parent / relative_path).is_file(), f"{path.name}: {target}"
 
 
-def test_vertical_scroll_browser_back_recipe_matches_example() -> None:
+def test_retained_examples_are_130_settings_and_two_layer_layout() -> None:
+    assert {path.name for path in EXAMPLES} == {
+        "firmware-130-config.json",
+        "nape-two-layer-config.json",
+    }
+    layout = load_config(ROOT / "examples" / "nape-two-layer-config.json")
+    assert layout.orientation is None and layout.active_layer == 1
+    assert [(layer.layer, layer.orientation) for layer in layout.layers] == [(1, 90), (2, 90)]
+    assert len(layout.combos) == 1 and layout.combos[0].create
+    assert not any(combo.delete for combo in layout.combos)
+
+
+def test_vertical_scroll_browser_back_recipe_has_expected_bindings() -> None:
     catalog = (ROOT / "docs" / "action-catalog.md").read_text()
     block = re.findall(r"```json\n(.*?)\n```", catalog, re.DOTALL)[0]
-    expected = load_config(ROOT / "examples" / "vertical-scroll-browser-back.json")
-    assert validate_config(json.loads(block)) == expected
+    expected = validate_config(json.loads(block))
     assert expected.to_dict()["layers"] == [
         {
             "layer": 0,

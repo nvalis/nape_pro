@@ -1,50 +1,70 @@
-# Current hardware verification status
+# Hardware verification status
 
-## Supported test target
+## Test target
 
-- Link-KM receiver `3434:D026`, firmware `0.1.3`.
-- Nape Pro `3434:4004`, firmware `v1.1.6-ZK Mar 9 2026 16:31:16`.
-- Nape awake in 2.4 GHz mode, receiver slot `0`; no other connected paired device.
-- Receiver Raw HID channel `FF60:61`, tested in WSL. Discover the interface rather than hardcoding a path.
-- VIA protocol version `12`; nine keymap layers, five stored DPI stages, 16 macro slots, 2394-byte macro buffer.
+- Nape Pro `3434:4004`, firmware `v1.3.0-ZK Aug 20 2026 08:35:53`.
+- Link-KM receiver `3434:D026`, firmware `0.1.3`, Nape awake in 2.4 GHz mode in slot 0.
+- Linux hidraw backend, configuration collection `FF60:61`.
+- VIA protocol 12, nine user keymap layers, five stored DPI stages, 16 macro slots, 2394-byte macro buffer.
 
-Results apply to this target, not every firmware or connection mode. Direct USB Nape access and Bluetooth are not verified/supported transports.
+Only Nape firmware `v1.3.0-ZK` is supported.
+These observations concern this device and transport, not every physical behavior or connection mode.
+USB Nape `3434:0440` uses the same CLI implementation and has packet tests, but 1.3.0 hardware checks here used the receiver.
+Bluetooth is not implemented.
 
-## Coverage
+## Passing read-only checks
 
-“Storage verified” means a guarded configuration change and restoration passed immediate read-back. It does **not** mean physical action execution or reboot persistence was tested.
+The updated CLI passed:
 
-| Feature | Current evidence / limitation |
+```sh
+uv run nape status --advanced --records --layer-orientations
+uv run nape export snapshots/nape-130-read-verified.json --advanced --records --layer-orientations
+uv run nape validate examples/firmware-130-config.json
+uv run nape plan examples/firmware-130-config.json --json
+```
+
+No configuration setters, resets, or flashing commands were sent.
+The export is local evidence in the git-ignored `snapshots/` directory.
+
+| Read | Observed result |
 |---|---|
-| Discovery / receiver diagnostics | Reads verified |
-| Core status / nine-layer keymap export | Reads verified |
-| Advanced status / export | Sleep, gesture/force-scroll and complete macro reads verified; unavailable optional fields retained as `null` |
-| DPI selection | Storage verified for stage selection and restoration |
-| DPI values | Storage verified for stage 0 at 450 and 800 DPI; sensor effects and full valid range unverified |
-| Global orientation | Storage verified at 90° and 135°; reported value depends on active layer |
-| Active layer | Storage verified for wire layers 1 and 2; verification uses `A3`, not a setter ACK |
-| Primary polling rate | Storage verified at 500 and 1000 Hz; secondary index preserved and verified; actual reporting frequency unverified |
-| Button / encoder bindings | Layer-0 M1 and CCW edits/restoration passed complete keymap read-back; individual named actions were not physically tested |
-| Tap-hold records | Creation and deletion storage verified; activation binding and tap/hold execution unverified |
-| Combo records | Existing slot update/restoration storage verified; deletion and empty-slot creation untested; button-mask and runtime semantics unverified |
-| Sleep | Partial raw-field edit/restoration storage verified; omitted fields preserved; units and zero semantics unverified |
-| Gestures / force-scroll | Binding/raw-byte edit/restoration storage verified; physical effects unverified |
-| Structured / raw macros | Complete structured-text replacement and exact raw-buffer restoration storage verified, including reset/chunk/marker ACKs; action execution unverified |
-| Custom DPI / cycling-stage count | Getters echo the zero-padded request; exported as `null`; targeted plans/writes refused |
-| Per-layer orientation | Getter echoes requested layer, not a trustworthy angle; guarded plan/apply blocked. Layer-8 orientation state cannot be confirmed |
-| Profiles | No usable Nape operation found; not implemented |
-| Firmware / bootloader / pairing / factory reset | Outside scope; not tested or exposed |
+| Effective/default layer | Both 1, reported orientation 90° |
+| Custom DPI | 400 |
+| Scroll-mode DPI candidate | 400; physical effect unverified |
+| Enabled stage count | 3 |
+| Stored DPI stages | `[400, 800, 1200, 2400, 4000]`, stage 2 selected |
+| Layer orientations | Layers 1 and 2 at 90°, all other user layers at 0° |
+| Combo inventory | All 30 indices returned absent records |
+| Tap-hold inventory | All 63 row-0 targets queried; `1:03` and `2:03` had held actions `0x5222` and `0x5221`, with zero tap actions |
+| Sleep | Backlight 0, sleep 300, magnet scan 0 |
+| Gestures and force modes | All zero |
+| Macros | Complete 2394-byte buffer, 16 empty slots |
+| Example plan | DPI index 2→1, custom DPI 400→1200, scroll-mode DPI 400→80; no writes |
 
-Configuration fields in the completed broad sweep matched the pre-test export after restoration. Targeted tap-hold deletion and combo restoration were also verified. Backups and raw diagnostic evidence are local in git-ignored `snapshots/`; exports are not complete device backups.
+## Pending hardware verification
 
-## Operational limitations
+All configuration setter families remain unverified on 1.3.0 hardware.
+This includes their ACK/status behavior, immediate write/read-back, restoration, deletion compaction, physical effects, and reboot persistence.
+The [published-image analysis](../research/nape-1.3.0.md) and packet tests establish implementation evidence, not completed device tests.
 
-- **Intermittent transport timeouts remain unresolved**, including receiver-state queries, macro-buffer reads and macro-reset ACK waits. A 5000-ms timeout does not reliably eliminate them.
-- Requests have no transaction IDs. Run commands serially, close other configurators, and do not silently retry failed writes.
-- Active-layer changes omit the expected `A7 2D` ACK on tested firmware. Apply uses layer read-back; orientation is not compared against the previous layer's angle. Switch layers and set orientation in separate applies.
-- Tap-hold deletion omits the expected `A7 25` ACK. Apply verifies the targeted empty record instead. Other ACK requirements, including macro reset and exact buffer echoes, remain enforced.
-- Macro replacement resets the entire store, then invalidates/transfers/finalizes it after saving a full-buffer backup. Interrupted writes can leave macros empty or invalid.
-- A failure may leave partial changes. There is no automatic retry, rollback, or whole-snapshot restore. Inspect current state before proposing recovery.
-- Physical behavior, combo release timing, and persistence across power cycles remain unverified. Use the acceptance checks in the [action catalog](action-catalog.md) after approved configuration changes.
+Any write test needs explicit approval, a new complete configuration backup, and a restoration plan.
+Check getter responses and setter status first, then compare every supported preserved setting after the change.
+Power-cycle persistence is a separate test because several firmware handlers ignore storage-backend errors.
+Use passive input capture and the [action catalog](action-catalog.md) for physical acceptance checks rather than claiming a stored keycode executed correctly.
 
-See [configuration](configuration.md) for write guards/recovery and [Launcher verification](launcher-verification.md) for source evidence.
+## Operational limits
+
+- Keep the Nape awake and stationary, close Launcher, and run configuration commands serially.
+  Receiver diagnostics can work while the Nape is asleep; Nape configuration reads cannot.
+- Reads are not atomic and requests have no transaction IDs.
+  Stop on a timeout; never infer an empty record from missing responses.
+- Every configuration write first fsyncs a new backup with all supported configuration families.
+  Any read or backup failure prevents setters.
+- A failed write can leave partial changes.
+  There is no automatic retry, rollback, or whole-snapshot restore command.
+- Macro replacement resets the entire macro store before transfer.
+  An interrupted transaction can leave macros empty or invalid.
+- Immediate read-back verifies reported state, not saving or persistence.
+  Zero status does not prove the settings backend succeeded.
+
+See the [configuration guide](configuration.md) for recovery and the [1.3.0 guide](firmware-1.3.0.md) for limits and record compaction.
