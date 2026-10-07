@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nape-cli"
+version = "0.1.0"
+description = "A small CLI for exploring and configuring Keychron Nape devices"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+hardware = ["hidapi>=0.14"]
+dev = ["pytest>=8", "ruff>=0.9", "ty>=0.0.1"]
+
+[project.scripts]
+nape = "nape_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nape_cli"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

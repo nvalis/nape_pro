@@ -1,0 +1,196 @@
+"""Command-line interface for Nape HID discovery and protocol exploration."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from typing import Any
+
+from . import __version__
+from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
+from .protocol import NapeCommand, build_request, orientation_units
+from .receiver import receiver_info
+from .transport import probe
+
+
+def _int_value(value: str) -> int:
+    try:
+        return int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected an integer (decimal or 0x-prefixed)") from exc
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="nape", description="Explore and configure Keychron Nape devices"
+    )
+    parser.add_argument("--version", action="version", version=f"nape {__version__}")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    devices_parser = commands.add_parser("devices", help="list matching Keychron HID interfaces")
+    devices_parser.add_argument(
+        "--all", action="store_true", help="show all interfaces with Keychron VID 0x3434"
+    )
+    devices_parser.add_argument(
+        "--json", action="store_true", help="print machine-readable device details"
+    )
+
+    protocol_parser = commands.add_parser(
+        "protocol", help="show a candidate protocol packet without sending it"
+    )
+    protocol_parser.add_argument(
+        "operation", choices=("get-orientation", "get-dpi", "set-orientation")
+    )
+    protocol_parser.add_argument(
+        "--angle", type=int, help="orientation angle for set-orientation (0..315 in 45° steps)"
+    )
+
+    probe_parser = commands.add_parser(
+        "probe", help="send a read-only protocol probe and show raw response bytes"
+    )
+    probe_parser.add_argument(
+        "--index", type=int, required=True, help="interface index from `nape devices`"
+    )
+    probe_parser.add_argument(
+        "--command", dest="probe_command", choices=("orientation", "dpi"), default="orientation"
+    )
+    probe_parser.add_argument(
+        "--report-id", type=_int_value, default=0, help="HID report ID (default: 0)"
+    )
+    probe_parser.add_argument("--timeout-ms", type=int, default=1000)
+
+    receiver_parser = commands.add_parser(
+        "receiver-info", help="read Link-KM receiver version and paired-device state"
+    )
+    receiver_parser.add_argument("--index", type=int, help="collection index from `nape devices`")
+    receiver_parser.add_argument("--timeout-ms", type=int, default=1500)
+    receiver_parser.add_argument("--json", action="store_true", help="include raw reply packets")
+    return parser
+
+
+def _device_record(device: dict[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "index": index,
+        "vendor_id": device.get("vendor_id"),
+        "product_id": device.get("product_id"),
+        "product_string": device.get("product_string"),
+        "manufacturer_string": device.get("manufacturer_string"),
+        "usage_page": device.get("usage_page"),
+        "usage": device.get("usage"),
+        "interface_number": device.get("interface_number"),
+        "path": path_text(device.get("path", "")),
+    }
+
+
+def _run(args: argparse.Namespace) -> int:
+    if args.command == "devices":
+        devices = enumerate_devices(all_collections=args.all)
+        records = [_device_record(device, index) for index, device in enumerate(devices)]
+        if args.json:
+            print(json.dumps(records, indent=2))
+        elif not records:
+            print(
+                "No matching HID interfaces found. Check USB connection and host HID visibility "
+                "(WSL may require USB passthrough)."
+            )
+        else:
+            for record in records:
+                print(
+                    f"[{record['index']}] {record['product_string'] or '(unnamed)'} "
+                    f"VID:PID={record['vendor_id']:04X}:{record['product_id']:04X} "
+                    f"usage_page={record['usage_page']:#06x} usage={record['usage']:#04x} "
+                    f"interface={record['interface_number']}\n    path={record['path']}"
+                )
+        return 0
+
+    if args.command == "protocol":
+        if args.operation == "set-orientation":
+            if args.angle is None:
+                raise ValueError("--angle is required for set-orientation")
+            units = orientation_units(args.angle)
+            request = build_request(NapeCommand.SET_ORIENTATION, units)
+        else:
+            command = {
+                "get-orientation": NapeCommand.GET_ORIENTATION,
+                "get-dpi": NapeCommand.GET_DPI,
+            }[args.operation]
+            request = build_request(command)
+        print("Candidate 32-byte payload (not sent; Nape Pro framing is unverified):")
+        print(request.hex(" "))
+        return 0
+
+    if args.command == "receiver-info":
+        devices = enumerate_devices()
+        if args.index is not None:
+            if not 0 <= args.index < len(devices):
+                raise ValueError("device index is out of range; run `nape devices` first")
+            selected = devices[args.index]
+        else:
+            candidates = [
+                device
+                for device in devices
+                if device.get("product_id") == LINK_KM_PRODUCT_ID
+                and device.get("usage_page") == RAW_USAGE_PAGE
+                and device.get("usage") == 0x61
+            ]
+            if len(candidates) != 1:
+                raise ValueError("expected one Link-KM Raw HID collection; use --index to select")
+            selected = candidates[0]
+        result = receiver_info(selected, timeout_ms=args.timeout_ms)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Receiver protocol: {result['protocol_version']}")
+            print(f"Firmware: {result['firmware']}")
+            for slot in result["slots"]:
+                if slot["vendor_id"] or slot["product_id"]:
+                    status = "connected" if slot["connected"] else f"status={slot['status']}"
+                    print(
+                        f"Slot {slot['slot']}: {slot['vendor_id']:04X}:{slot['product_id']:04X} "
+                        f"({status})"
+                    )
+        return 0
+
+    if args.command == "probe":
+        if args.index < 0:
+            raise ValueError("--index must be non-negative")
+        if args.timeout_ms <= 0:
+            raise ValueError("--timeout-ms must be positive")
+        devices = enumerate_devices()
+        if args.index >= len(devices):
+            raise ValueError(f"device index {args.index} is out of range; run `nape devices` first")
+        selected = _device_record(devices[args.index], args.index)
+        print(
+            "Experimental read-only probe: this uses an unverified 32-byte HID envelope; "
+            "a timeout does not necessarily mean the device is incompatible."
+        )
+        response = probe(
+            devices[args.index],
+            args.probe_command,
+            report_id=args.report_id,
+            timeout_ms=args.timeout_ms,
+        )
+        device_name = selected["product_string"] or "(unnamed)"
+        device_id = f"{selected['vendor_id']:04X}:{selected['product_id']:04X}"
+        print(f"device: {device_name} ({device_id})")
+        response_text = response.hex(" ") if response else "<no response>"
+        print(f"response ({len(response)} bytes): {response_text}")
+        return 0
+
+    raise AssertionError(f"unhandled command {args.command}")
+
+
+def main() -> None:
+    parser = _parser()
+    args = parser.parse_args()
+    try:
+        exit_code = _run(args)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"nape: error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    raise SystemExit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
