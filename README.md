@@ -2,6 +2,12 @@
 
 A small command-line companion for exploring the Keychron Nape Pro instead of relying exclusively on the web configurator.
 
+## Documentation
+
+- [Agent guide](docs/agent-guide.md): safe inspection workflow, configuration limitations, and connection troubleshooting.
+- [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
+- [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
+
 ## Current status
 
 Implemented: HID discovery and read-only Link-KM receiver queries, tested against hardware `3434:D026`. The receiver's **FF60:61 Raw HID collection** accepts unnumbered 32-byte payloads for protocol (`0xB1`), paired-device state (`0xB2`), and firmware (`0xB3`) queries. Unsolicited `0xBC` notifications are skipped when waiting for replies.
