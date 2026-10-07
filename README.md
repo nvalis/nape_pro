@@ -8,17 +8,19 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 - [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
 - [Configuration](docs/configuration.md): partial pointer/keymap JSON, validation/planning, and guarded apply with snapshot and verification.
 - [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
-- [Hardware verification log](docs/hardware-tests.md): tested writes, restoration, and remaining verification gaps.
+- [Named keycodes and actions](docs/action-catalog.md): protocol-12 lookup tables, natural-language recipes, and physical acceptance checks.
+- [Hardware verification status](docs/hardware-tests.md): current coverage and remaining verification gaps.
+- [Official Launcher verification](docs/launcher-verification.md): current source evidence and safety differences.
 
 ## Current status
 
 Implemented: HID discovery and read-only Link-KM receiver queries, tested against hardware `3434:D026`. The receiver's **FF60:61 Raw HID collection** accepts unnumbered 32-byte payloads for protocol (`0xB1`), paired-device state (`0xB2`), and firmware (`0xB3`) queries. Unsolicited `0xBC` notifications are skipped when waiting for replies.
 
-Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. `export --advanced` additionally reads per-layer orientation and the VIA macro buffer. Those advanced reads and writes are not hardware-verified. Read requests go through a read-command allowlist; experimental setters use a separate, restricted write path.
+Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, both encoder directions, and the VIA macro buffer. `status` reads core settings; `status --advanced` and `export --advanced` also read optional settings, gestures, force-scroll, and macros. On tested firmware the custom-DPI and DPI-stage-count queries echo their request, so the CLI reports these fields as `null` and refuses configs that target them; sleep and the other advanced reads succeed. `export --layer-orientations` is separate because the tested firmware echoes the requested layer instead of returning a usable angle, and the command fails safely. DPI values/selection, orientation, active layer, polling, button/encoder bindings, tap-hold records, existing combo updates, sleep, gestures/force-scroll, and full macro replacement have passed hardware storage/read-back tests. Custom DPI, stage count, and per-layer orientation remain unavailable on this firmware. Physical action execution and reboot persistence are not established. Macro replacement uses the Launcher reset/invalidate/transfer/finalize sequence and can leave macros empty or invalid if interrupted. Active-layer reads use the unchanged wire index, and polling writes preserve the secondary polling field. Read requests go through a read-command allowlist; experimental setters use a separate, restricted write path.
 
-`validate` checks a partial pointer/keymap/orientation/macro-buffer JSON config offline; `plan` compares it with the device without writing. See [Configuration](docs/configuration.md).
+`validate` checks partial pointer/keymap, custom-DPI, stage-count, sleep, active-layer, tap-hold, combo, gesture, macro, and orientation configs offline; `plan` compares supported entries with the device without writing. See [Configuration](docs/configuration.md).
 
-`apply` defaults to dry-run. Guarded writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; other setters, including per-layer orientation and macro-buffer writes, remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies all pointer fields and the complete expected keymap, including omitted entries, plus any requested per-layer orientation or macro buffer; failures may leave partial changes and are not automatically rolled back.
+`apply` defaults to dry-run. Guarded writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. The [hardware matrix](docs/hardware-tests.md) covers the available configuration families, including full macro replacement and exact restoration; successful storage read-back does not prove runtime behavior. Combo deletion/empty-slot creation remain untested. Structured/raw macro replacements reset the entire macro store only after a full-buffer backup has been saved; every chunk is ACKed without automatic retry. See the [verification status](docs/hardware-tests.md). Read-back verifies all pointer fields and the complete expected keymap, including omitted entries, plus requested active-layer, targeted advanced records, gesture/scroll state, requested device settings/macros, and the preserved secondary polling index. For an active-layer-only switch, the context-dependent orientation readout is not compared with the previous layer. Failures may leave partial changes and are not automatically rolled back.
 
 Direct USB transport is still unverified. `probe` rejects the Link-KM receiver and sends only read commands. `protocol set-orientation` only prints a packet.
 
@@ -29,6 +31,7 @@ Reference notes:
 - [Command Map](https://github.com/Tymon3310/keychron-vial/blob/main/docs/launcher/command-map.md)
 - [Bridge / Dongle Protocol](https://github.com/Tymon3310/keychron-vial/blob/main/docs/launcher/bridge-dongle-protocol.md)
 - [NapeBar protocol implementation](https://github.com/ky0209/NapeBar/blob/main/Sources/NapeBar/Protocol/NapeHID.swift) — Nape-specific layouts, independently checked using device read replies
+- [Keychron Launcher](https://launcher.keychron.com/) — advanced packet layouts were checked against the deployed Launcher v1.5.0 JavaScript bundle; not a firmware specification
 
 These notes are not specifications. On the tested receiver, the numbered **008C:01** bridge collection is separate from the unnumbered **FF60:61** collection used by `receiver-info`.
 
@@ -44,7 +47,7 @@ Linux uses the `hidraw` backend when available, avoiding the libusb backend's mi
 
 In WSL, attach the receiver/device with `usbipd attach --wsl --busid <busid>` from Windows. Sharing alone is not attachment. While attached, the receiver is unavailable to Windows. Detach with `usbipd detach --busid <busid>`; **if force-bound**, Windows access also requires `usbipd unbind --busid <busid>` in Administrator PowerShell. Detaching alone does not undo force-binding.
 
-Receiver and wireless Nape reads are supported, with guarded pointer/keymap writes. Per-layer orientation and raw macro-buffer configuration are experimental. Direct USB Nape access, Bluetooth, tap-holds, combos, gestures, profiles, and active-layer switching remain unimplemented.
+Receiver and wireless Nape reads are supported, with guarded pointer/keymap writes and Launcher-derived experimental active-layer, tap-hold, combo, gesture, force-scroll, and per-layer-orientation operations, plus custom-DPI, DPI-stage-count, sleep, and complete macro replacement. See the [hardware matrix](docs/hardware-tests.md) for tested setters and limitations. On the tested firmware custom-DPI and stage-count reads are unavailable, while the per-layer orientation read is unusable and guarded planning stops before those setters. Direct USB Nape access and Bluetooth remain unimplemented. Profile selection has no usable operation in the official Nape code and remains unsupported.
 
 ## Usage
 
@@ -70,12 +73,15 @@ Read Nape status or export its pointer settings and all nine keymap layers:
 uv run nape status
 uv run nape status --json
 uv run nape export nape-snapshot.json
+uv run nape status --advanced
 uv run nape export nape-advanced.json --advanced
+# This will fail safely on tested firmware until GET_LAYER_ORI is understood:
+uv run nape export nape-layers.json --layer-orientations
 ```
 
-These commands require an awake Nape in 2.4 GHz mode. Export never overwrites an existing file. Layer and DPI-stage indices are zero-based. Button names are `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press`; the dial has `ccw`/`cw` keycodes. Keycodes are hex values, not host keyboard shortcuts.
+These commands require an awake Nape in 2.4 GHz mode. Export never overwrites an existing file. Layer and DPI-stage indices are zero-based. Button names are `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press`; the dial has `ccw`/`cw` keycodes. Keycodes are hex values, not host keyboard shortcuts. The [action catalog](docs/action-catalog.md) translates named actions such as mouse Back and vertical scrolling to numeric bindings; symbolic names are reference labels, not accepted JSON inputs.
 
-A standard export is not a complete firmware backup. `export --advanced` includes per-layer orientation and the raw VIA macro buffer, but still omits tap-holds, combos, gestures, and mouse profiles. Snapshots cannot be applied wholesale. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
+A standard export is not a complete firmware backup. `export --advanced` includes gestures, force-scroll settings, decoded macro slots, and the raw VIA macro buffer. Tap-holds and combos are queried only for explicit targets in a config, not bulk-exported. Per-layer orientation export is a separate, currently failing query on the tested firmware. Profiles are not exposed by the current Launcher. Snapshots cannot be applied wholesale. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
 
 Validate and preview a partial configuration:
 

@@ -1,30 +1,50 @@
-# Hardware verification log
+# Current hardware verification status
 
-Tested receiver: Link-KM `3434:D026`, firmware `0.1.3`. Nape: receiver slot 0, paired ID `3434:4004`, firmware `v1.1.6-ZK Mar 9 2026 16:31:16`. Tests ran over the receiver's `FF60:61` Raw HID channel in WSL. The per-layer orientation (`A7 38/39`) and VIA macro-buffer (`0C..0F`) support was added later and has only simulated-device tests; do not infer hardware support from this log.
+## Supported test target
 
-## Active DPI stage: write and restore — passed
+- Link-KM receiver `3434:D026`, firmware `0.1.3`.
+- Nape Pro `3434:4004`, firmware `v1.1.6-ZK Mar 9 2026 16:31:16`.
+- Nape awake in 2.4 GHz mode, receiver slot `0`; no other connected paired device.
+- Receiver Raw HID channel `FF60:61`, tested in WSL. Discover the interface rather than hardcoding a path.
+- VIA protocol version `12`; nine keymap layers, five stored DPI stages, 16 macro slots, 2394-byte macro buffer.
 
-A temporary, approved test used `nape apply --write` to select an existing stage, then restore the original. DPI values and keymap were never intentionally changed.
+Results apply to this target, not every firmware or connection mode. Direct USB Nape access and Bluetooth are not verified/supported transports.
 
-| Step | Verified state |
+## Coverage
+
+“Storage verified” means a guarded configuration change and restoration passed immediate read-back. It does **not** mean physical action execution or reboot persistence was tested.
+
+| Feature | Current evidence / limitation |
 |---|---|
-| Before | Stage `2`, DPI `1600`; stages `[450,800,1600,3200,4000]` |
-| Apply `{"schema_version":1,"dpi_index":1}` | Stage `1`, DPI `800`; apply reported `verified: true` |
-| Apply `{"schema_version":1,"dpi_index":2}` | Restored stage `2`, DPI `1600`; apply reported `verified: true` |
-| Export after restoration | Firmware, layer count, active layer, angle, DPI selection/values, polling rate/support, and all nine keymaps equal the original snapshot |
+| Discovery / receiver diagnostics | Reads verified |
+| Core status / nine-layer keymap export | Reads verified |
+| Advanced status / export | Sleep, gesture/force-scroll and complete macro reads verified; unavailable optional fields retained as `null` |
+| DPI selection | Storage verified for stage selection and restoration |
+| DPI values | Storage verified for stage 0 at 450 and 800 DPI; sensor effects and full valid range unverified |
+| Global orientation | Storage verified at 90° and 135°; reported value depends on active layer |
+| Active layer | Storage verified for wire layers 1 and 2; verification uses `A3`, not a setter ACK |
+| Primary polling rate | Storage verified at 500 and 1000 Hz; secondary index preserved and verified; actual reporting frequency unverified |
+| Button / encoder bindings | Layer-0 M1 and CCW edits/restoration passed complete keymap read-back; individual named actions were not physically tested |
+| Tap-hold records | Creation and deletion storage verified; activation binding and tap/hold execution unverified |
+| Combo records | Existing slot update/restoration storage verified; deletion and empty-slot creation untested; button-mask and runtime semantics unverified |
+| Sleep | Partial raw-field edit/restoration storage verified; omitted fields preserved; units and zero semantics unverified |
+| Gestures / force-scroll | Binding/raw-byte edit/restoration storage verified; physical effects unverified |
+| Structured / raw macros | Complete structured-text replacement and exact raw-buffer restoration storage verified, including reset/chunk/marker ACKs; action execution unverified |
+| Custom DPI / cycling-stage count | Getters echo the zero-padded request; exported as `null`; targeted plans/writes refused |
+| Per-layer orientation | Getter echoes requested layer, not a trustworthy angle; guarded plan/apply blocked. Layer-8 orientation state cannot be confirmed |
+| Profiles | No usable Nape operation found; not implemented |
+| Firmware / bootloader / pairing / factory reset | Outside scope; not tested or exposed |
 
-Commands used after connecting/waking the device:
+Configuration fields in the completed broad sweep matched the pre-test export after restoration. Targeted tap-hold deletion and combo restoration were also verified. Backups and raw diagnostic evidence are local in git-ignored `snapshots/`; exports are not complete device backups.
 
-```sh
-uv run nape plan snapshots/dpi-stage-test.json --json
-uv run nape apply snapshots/dpi-stage-test.json --write --backup snapshots/before-dpi-stage-test.json --json
-uv run nape status
-uv run nape apply snapshots/dpi-stage-restore.json --write --backup snapshots/before-dpi-stage-restore.json --json
-uv run nape export snapshots/after-dpi-stage-restore.json
-```
+## Operational limitations
 
-The config, pre-write snapshots, and final export remain in local `snapshots/` (gitignored). The receiver was detached from WSL after the test. It was previously **force-bound**, so Windows access still requires `usbipd unbind --busid 7-2` in Administrator PowerShell. This session's unbind attempt failed for lack of administrator privileges; detach alone does not restore force-bound devices.
+- **Intermittent transport timeouts remain unresolved**, including receiver-state queries, macro-buffer reads and macro-reset ACK waits. A 5000-ms timeout does not reliably eliminate them.
+- Requests have no transaction IDs. Run commands serially, close other configurators, and do not silently retry failed writes.
+- Active-layer changes omit the expected `A7 2D` ACK on tested firmware. Apply uses layer read-back; orientation is not compared against the previous layer's angle. Switch layers and set orientation in separate applies.
+- Tap-hold deletion omits the expected `A7 25` ACK. Apply verifies the targeted empty record instead. Other ACK requirements, including macro reset and exact buffer echoes, remain enforced.
+- Macro replacement resets the entire store, then invalidates/transfers/finalizes it after saving a full-buffer backup. Interrupted writes can leave macros empty or invalid.
+- A failure may leave partial changes. There is no automatic retry, rollback, or whole-snapshot restore. Inspect current state before proposing recovery.
+- Physical behavior, combo release timing, and persistence across power cycles remain unverified. Use the acceptance checks in the [action catalog](action-catalog.md) after approved configuration changes.
 
-**What this establishes:** `A7 22 stage` changes the active DPI stage on this target; immediate read-back and restoration work. Each apply saved a new supported-state snapshot before its setter.
-
-**What it does not establish:** persistence after reboot; support for other setters; or preservation of macros, per-layer orientations, gestures, and other state during unrelated writes. Advanced export now reads raw macros/per-layer orientation, but neither it nor those setters has been hardware-verified. Simulated-device tests cannot substitute for hardware tests. Do not infer that all writes are hardware-verified from this result.
+See [configuration](configuration.md) for write guards/recovery and [Launcher verification](launcher-verification.md) for source evidence.
