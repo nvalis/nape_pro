@@ -25,10 +25,10 @@ def device(monkeypatch, tmp_path) -> WritableNape:
 
 
 def test_new_reads_match_launcher_offsets_and_preserve_raw(device) -> None:
-    device.custom_dpi = 0x1234
+    device.custom_dpi = 0x0B34
     device.dpi_stage_count = 3
     result = snapshot.read_snapshot(RECEIVER, include_device_settings=True)
-    assert result["custom_dpi"] == 0x1234
+    assert result["custom_dpi"] == 0x0B34
     assert result["dpi_stage_count"] == 3
     assert result["sleep"] == {"backlight": 0x0123, "sleep": 0x0456, "magnet_scan": 0x0789}
     for command in ("a7 36", "a7 3c", "a7 0b"):
@@ -36,16 +36,15 @@ def test_new_reads_match_launcher_offsets_and_preserve_raw(device) -> None:
     assert device.closed
 
 
-def test_zero_echoed_optional_settings_are_unavailable_but_sleep_remains_readable(device) -> None:
-    device.custom_dpi = 0
-    device.dpi_stage_count = 0
-    result = snapshot.read_snapshot(RECEIVER, include_device_settings=True)
-    assert result["custom_dpi"] is None
-    assert result["dpi_stage_count"] is None
-    assert result["sleep"] == device.sleep_settings
-    assert result["raw"]["a7 36"] == bytes.fromhex("a7 36").ljust(32, b"\x00").hex(" ")
-    assert result["raw"]["a7 3c"] == bytes.fromhex("a7 3c").ljust(32, b"\x00").hex(" ")
-    assert "a7 0b" in result["raw"]
+@pytest.mark.parametrize(
+    "field,error",
+    [("custom_dpi", "invalid custom DPI"), ("dpi_stage_count", "invalid DPI stage count")],
+)
+def test_zero_reported_device_settings_are_invalid(device, field, error) -> None:
+    setattr(device, field, 0)
+    with pytest.raises(ValueError, match=error):
+        snapshot.read_snapshot(RECEIVER, include_device_settings=True)
+    assert device.closed
 
 
 def test_standard_status_avoids_unverified_device_settings_queries(device) -> None:
@@ -70,13 +69,12 @@ def test_invalid_reported_stage_count_aborts_before_writes(device, count) -> Non
 @pytest.mark.parametrize(
     "field,value,error",
     [
-        ("custom_dpi", 900, "no usable custom DPI value"),
-        ("dpi_stage_count", 3, "no usable DPI stage count"),
+        ("custom_dpi", 900, "invalid custom DPI"),
+        ("dpi_stage_count", 3, "invalid DPI stage count"),
     ],
 )
-def test_unavailable_settings_cannot_be_planned_or_written(device, field, value, error) -> None:
-    device.custom_dpi = 0
-    device.dpi_stage_count = 0
+def test_invalid_reported_settings_prevent_all_writes(device, field, value, error) -> None:
+    setattr(device, field, 0)
     config = validate_config({"schema_version": 1, field: value})
     with pytest.raises(ValueError, match=error):
         apply_config(RECEIVER, config, write=True, backup=device.backup_path)
@@ -130,18 +128,15 @@ def test_new_settings_dry_run_sends_only_reads(device, field, value) -> None:
     assert not device.setters and not device.backup_path.exists()
 
 
-def test_sleep_plan_works_when_other_optional_getters_echo_zero(device) -> None:
-    device.custom_dpi = 0
-    device.dpi_stage_count = 0
+def test_sleep_plan_preserves_available_device_settings(device) -> None:
     result = apply_config(RECEIVER, validate_config({"schema_version": 1, "sleep": {"sleep": 30}}))
     assert result["mode"] == "dry-run"
     assert result["changes"][0]["setting"] == "sleep"
     assert not device.setters and not device.backup_path.exists()
 
 
-def test_sleep_and_stage_selection_plan_with_unavailable_optional_count(device) -> None:
-    device.custom_dpi = 0
-    device.dpi_stage_count = 0
+def test_sleep_and_stage_selection_plan_reads_the_enabled_count(device) -> None:
+    device.dpi_stage_count = 2
     result = apply_config(
         RECEIVER,
         validate_config({"schema_version": 1, "dpi_index": 1, "sleep": {"sleep": 30}}),
@@ -155,7 +150,7 @@ def test_new_setters_use_launcher_little_endian_and_verify_all_device_fields(dev
     config = validate_config(
         {
             "schema_version": 1,
-            "custom_dpi": 0x1234,
+            "custom_dpi": 0x0B34,
             "dpi_stage_count": 4,
             "sleep": {"sleep": 0x4567},
         }
@@ -164,7 +159,7 @@ def test_new_setters_use_launcher_little_endian_and_verify_all_device_fields(dev
     assert result["verified"]
     assert [p[1:9] for p in device.setters] == [
         bytes.fromhex("a7 3d 04 00 00 00 00 00"),
-        bytes.fromhex("a7 37 34 12 00 00 00 00"),
+        bytes.fromhex("a7 37 34 0b 00 00 00 00"),
         bytes.fromhex("a7 0c 23 01 67 45 89 07"),
     ]
     assert device.sleep_settings["backlight"] == original_sleep["backlight"]
@@ -405,23 +400,21 @@ def test_sleep_zero_values_roundtrip_without_touching_unspecified_fields(device)
     assert device.sleep_settings == {**original, "sleep": 0}
 
 
-def test_sleep_echo_like_zero_timers_are_unusable_as_in_launcher(device) -> None:
+def test_zero_sleep_timers_do_not_block_other_device_settings(device) -> None:
     device.sleep_settings.update({"backlight": 0, "sleep": 0})
-    with pytest.raises(ValueError, match="sleep query returned no usable state"):
-        apply_config(
-            RECEIVER,
-            validate_config({"schema_version": 1, "custom_dpi": 900}),
-            write=True,
-            backup=device.backup_path,
-        )
-    assert not device.setters and not device.backup_path.exists() and device.closed
+    result = apply_config(
+        RECEIVER,
+        validate_config({"schema_version": 1, "custom_dpi": 900}),
+        write=True,
+        backup=device.backup_path,
+    )
+    assert result["verified"] and device.sleep_settings["sleep"] == 0
 
 
-def test_sleep_config_that_would_break_readback_is_rejected_before_writing(device) -> None:
+def test_zero_sleep_config_is_verified_without_claiming_timer_semantics(device) -> None:
     config = validate_config({"schema_version": 1, "sleep": {"backlight": 0, "sleep": 0}})
-    with pytest.raises(ValueError, match="cannot both be zero"):
-        apply_config(RECEIVER, config, write=True, backup=device.backup_path)
-    assert not device.setters and not device.backup_path.exists() and device.closed
+    assert apply_config(RECEIVER, config, write=True, backup=device.backup_path)["verified"]
+    assert device.sleep_settings["sleep"] == device.sleep_settings["backlight"] == 0
 
 
 def test_unavailable_extended_getter_prevents_all_writes(device, monkeypatch) -> None:
@@ -443,7 +436,7 @@ def test_unavailable_extended_getter_prevents_all_writes(device, monkeypatch) ->
 
 
 def test_advanced_export_includes_all_new_settings(device, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: RECEIVER)
     path = tmp_path / "advanced.json"
     assert cli._run(cli._parser().parse_args(["export", str(path), "--advanced"])) == 0
     data = json.loads(path.read_text())

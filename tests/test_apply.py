@@ -10,6 +10,8 @@ from nape_cli.apply import apply_config as apply_pointer_config
 from nape_cli.apply import encode_change
 from nape_cli.config import Change, validate_config
 
+USB = {**RECEIVER, "product_id": 0x0440}
+
 
 class WritableNape(FakeNape):
     def __init__(self) -> None:
@@ -23,11 +25,17 @@ class WritableNape(FakeNape):
         self.fail_write_number: int | None = None
         self.backup_path = None
         self.other_slot_connected = False
-        self.firmware = b"v1.1.6-ZK"
         self.change_keymap = False
-        self.omit_layer_ack = False
-        self.orientation_follows_active_layer = False
-        self.layer_angles = {1: 90, 2: 0}
+        self.status_failure = None
+        self.omit_ack = None
+
+    @property
+    def orientation(self):
+        return self.layer_orientations[self.current_layer]
+
+    @orientation.setter
+    def orientation(self, value):
+        self.layer_orientations[self.current_layer] = value
 
     def write(self, packet: bytes) -> int:
         if packet[1:3] in (
@@ -44,12 +52,16 @@ class WritableNape(FakeNape):
             b"\xa7\x32",
             b"\xa7\x39",
             b"\xa7\x37",
+            b"\xa7\x3b",
             b"\xa7\x3d",
             b"\xa7\x0c",
         ) or packet[1] in (0x0F, 0x10):
             assert self.backup_path is not None and self.backup_path.is_file()
             backup = json.loads(self.backup_path.read_text())
             assert len(backup["layers"]) == 9
+            assert len(backup["combos"]) == 30 and len(backup["tap_holds"]) == 63
+            assert "macro_buffer" in backup and "scroll_dpi" in backup
+            assert all("orientation" in layer for layer in backup["layers"])
             self.setters.append(packet)
             if len(self.setters) == self.fail_write_number:
                 raise OSError("simulated USB failure")
@@ -65,7 +77,9 @@ class WritableNape(FakeNape):
                 else:
                     sub = packet[2]
                     if sub == 0x37:
-                        self.custom_dpi = int.from_bytes(packet[3:5], "little")
+                        self.custom_dpi = max(400, min(4000, int.from_bytes(packet[3:5], "little")))
+                    elif sub == 0x3B:
+                        self.scroll_dpi = max(40, min(4000, int.from_bytes(packet[3:5], "little")))
                     elif sub == 0x3D:
                         self.dpi_stage_count = packet[3]
                     elif sub == 0x0C:
@@ -85,9 +99,7 @@ class WritableNape(FakeNape):
                     elif sub == 0x39:
                         self.layer_orientations[packet[3]] = packet[4] * 45
                     elif sub == 0x2D:
-                        self.current_layer = packet[3]
-                        if self.orientation_follows_active_layer:
-                            self.orientation = self.layer_angles[self.current_layer]
+                        self.default_layer = self.current_layer = packet[3]
                     elif sub == 0x29:
                         self.gesture = {
                             name: int.from_bytes(packet[3 + i * 2 : 5 + i * 2], "little")
@@ -112,21 +124,19 @@ class WritableNape(FakeNape):
                             "held": int.from_bytes(packet[10:12], "little"),
                         }
                     elif sub == 0x2E:
-                        self.combos.pop(packet[3], None)
-                if packet[1] in (0x0F, 0x10):
-                    self.response = packet[1:]
-                elif packet[2] == 0x2F or (packet[2] == 0x2D and self.omit_layer_ack):
-                    self.response = bytes(32)
-                else:
-                    ack = bytearray(32)
-                    ack[0] = 0xA7
-                    ack[1] = {0x2F: 0x25}.get(packet[2], packet[2])
-                    if packet[2] == 0x32:
-                        ack[2] = 0
-                    self.response = bytes(ack)
-            elif packet[1:3] == b"\xa7\x34":
-                # An ACK is not proof that storage accepted the requested value.
+                        index = packet[3]
+                        self.combos = {
+                            key if key < index else key - 1: value
+                            for key, value in self.combos.items()
+                            if key != index
+                        }
+            if packet[1] in (0x0F, 0x10):
                 self.response = packet[1:]
+            else:
+                # A zero status is not proof of acceptance or successful persistence.
+                ack = bytearray(packet[1:])
+                ack[2] = 1 if packet[2] == self.status_failure else 0
+                self.response = b"" if packet[2] == self.omit_ack else bytes(ack)
             return len(packet)
         count = super().write(packet)
         reply = bytearray(self.response)
@@ -193,12 +203,30 @@ def test_explicit_apply_saves_backup_then_verifies_all_pointer_fields(writable) 
     assert writable.closed
 
 
-def test_apply_per_layer_orientation_is_blocked_on_known_firmware(writable) -> None:
+def test_usb_write_uses_usb_transport_and_verifies_readback(writable) -> None:
+    config = validate_config({"schema_version": 1, "orientation": 135})
+    result = apply_pointer_config(USB, config, write=True, backup=writable.backup_path)
+    assert result["mode"] == "applied" and result["verified"]
+    assert writable.setters[0][1:4] == bytes.fromhex("a7 34 03")
+    assert json.loads(writable.backup_path.read_text())["transport"] == "usb-raw-hid"
+    assert not any(request[:1] == b"\xb2" for request in writable.requests)
+    assert writable.closed
+
+
+def test_usb_write_rejects_unverified_firmware_before_backup_or_setter(writable) -> None:
+    writable.firmware = b"v9.0.0-ZK"
+    config = validate_config({"schema_version": 1, "orientation": 135})
+    with pytest.raises(ValueError, match="unsupported Nape firmware"):
+        apply_pointer_config(USB, config, write=True, backup=writable.backup_path)
+    assert writable.setters == [] and not writable.backup_path.exists()
+    assert writable.closed
+
+
+def test_apply_per_layer_orientation_is_backed_up_and_verified(writable) -> None:
     config = validate_config({"schema_version": 1, "layers": [{"layer": 3, "orientation": 135}]})
-    with pytest.raises(ValueError, match="per-layer orientation is unreadable"):
-        apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
-    assert not writable.setters and not writable.backup_path.exists()
-    assert not any(p[:2] == b"\xa7\x38" for p in writable.requests)
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["verified"] and writable.layer_orientations[3] == 135
+    assert writable.setters[0][1:5] == bytes.fromhex("a7 39 03 03")
     assert writable.closed
 
 
@@ -210,14 +238,11 @@ def test_layer_switch_and_orientation_must_be_applied_separately(writable) -> No
     assert not writable.setters and not writable.backup_path.exists()
 
 
-def test_apply_active_layer_verifies_readback_when_device_omits_ack(writable) -> None:
-    writable.current_layer = 1
-    writable.omit_layer_ack = True
-    writable.orientation_follows_active_layer = True
+def test_apply_active_layer_requires_status_and_verifies_new_angle(writable) -> None:
     config = validate_config({"schema_version": 1, "active_layer": 2})
     result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
     assert result["verified"]
-    assert writable.current_layer == 2 and writable.orientation == 0
+    assert writable.default_layer == writable.current_layer == 2 and writable.orientation == 0
     assert writable.setters[0][1:4] == bytes.fromhex("a7 2d 02")
 
 
@@ -243,7 +268,9 @@ def test_apply_tap_hold_matches_launcher_little_endian_layout(writable) -> None:
     config = validate_config(
         {
             "schema_version": 1,
-            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1"}],
+            "tap_holds": [
+                {"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1", "create": True}
+            ],
         }
     )
     result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
@@ -252,7 +279,7 @@ def test_apply_tap_hold_matches_launcher_little_endian_layout(writable) -> None:
     assert writable.setters[0][1:10] == bytes.fromhex("a7 25 00 00 04 04 00 e1 00")
 
 
-def test_apply_tap_hold_delete_verifies_readback_without_ack(writable) -> None:
+def test_apply_tap_hold_delete_requires_status_and_verifies_readback(writable) -> None:
     writable.tap_holds[(0, 4)] = {"tap": 4, "held": 0xE1}
     config = validate_config(
         {"schema_version": 1, "tap_holds": [{"layer": 0, "button": "M1", "delete": True}]}
@@ -263,7 +290,7 @@ def test_apply_tap_hold_delete_verifies_readback_without_ack(writable) -> None:
     assert writable.setters[0][1:6] == bytes.fromhex("a7 2f 00 00 04")
 
 
-def test_tap_hold_delete_without_ack_must_still_remove_the_record(writable) -> None:
+def test_zero_status_tap_hold_delete_must_still_remove_the_record(writable) -> None:
     writable.tap_holds[(0, 4)] = {"tap": 4, "held": 0xE1}
     writable.reject_writes = True
     config = validate_config(
@@ -427,7 +454,7 @@ def test_unverified_or_ambiguous_target_prevents_writes(writable, guard: str) ->
         writable.firmware = b"v9.0.0-ZK"
     else:
         writable.other_slot_connected = True
-    with pytest.raises(ValueError, match="writes"):
+    with pytest.raises(ValueError, match="unsupported Nape firmware|writes"):
         apply_pointer_config(
             RECEIVER,
             validate_config({"schema_version": 1, "orientation": 135}),
@@ -458,7 +485,7 @@ def test_encoder_rejects_invalid_or_unimplemented_setters(change: Change) -> Non
 def test_cli_write_requires_backup_before_hardware(monkeypatch, tmp_path) -> None:
     config = tmp_path / "config.json"
     config.write_text('{"schema_version": 1, "orientation": 135}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: pytest.fail("hardware queried"))
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: pytest.fail("hardware queried"))
     with pytest.raises(ValueError, match="requires --backup"):
         cli._run(cli._parser().parse_args(["apply", str(config), "--write"]))
 
@@ -466,7 +493,7 @@ def test_cli_write_requires_backup_before_hardware(monkeypatch, tmp_path) -> Non
 def test_cli_apply_is_dry_run_by_default(writable, monkeypatch, tmp_path, capsys) -> None:
     config = tmp_path / "config.json"
     config.write_text('{"schema_version": 1, "orientation": 135}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: RECEIVER)
     assert cli._run(cli._parser().parse_args(["apply", str(config), "--json"])) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["mode"] == "dry-run"

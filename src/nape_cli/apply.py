@@ -1,8 +1,8 @@
 """Explicit, guarded setting/keymap writes with prior snapshot and read-back.
 
-Setter layouts are source-based; broad configuration storage/read-back tests
-have passed on the tested Nape/receiver. Physical actions and persistence remain
-unverified; custom DPI, stage count, and per-layer orientation are unavailable.
+The 1.3.0 setter layouts come from published-image analysis and packet tests.
+Hardware getters are checked separately. Setter behavior, physical actions,
+and reboot persistence remain unverified on hardware.
 The read-only channel admits getters only. Macro reset is restricted to a
 validated, backed-up full replacement through this write path.
 """
@@ -28,9 +28,9 @@ from .config import (
     plan_changes,
     validate_config,
 )
-from .devices import hid_backend
+from .devices import configuration_transport, hid_backend
+from .firmware import CUSTOM_DPI_RANGE, RECORD_LIMIT, SCROLL_DPI_RANGE, require_firmware
 from .protocol import NapeCommand, build_request, orientation_units
-from .receiver import validate_receiver
 from .snapshot import BUTTON_ORDER, POLLING_RATES, read_snapshot_from_device
 
 
@@ -40,10 +40,16 @@ def encode_change(change: Change, *, polling_rate_for_fr_index: int | None = Non
         value is not None for value in (change.index, change.layer, change.binding)
     ):
         raise ValueError("device settings do not accept stage/layer/binding parameters")
-    if change.field == "custom_dpi":
-        if type(change.after) is not int or not 1 <= change.after <= 65535:
-            raise ValueError("custom DPI must be an integer in 1..65535")
-        return build_request(NapeCommand.SET_CUSTOM_DPI, change.after & 255, change.after >> 8)
+    if change.field in ("custom_dpi", "scroll_dpi"):
+        low, high = SCROLL_DPI_RANGE if change.field == "scroll_dpi" else CUSTOM_DPI_RANGE
+        if type(change.after) is not int or not low <= change.after <= high:
+            raise ValueError(f"{change.field} must be an integer in {low}..{high}")
+        command = (
+            NapeCommand.SET_SCROLL_DPI
+            if change.field == "scroll_dpi"
+            else NapeCommand.SET_CUSTOM_DPI
+        )
+        return build_request(command, change.after & 255, change.after >> 8)
     if change.field == "dpi_stage_count":
         if type(change.after) is not int or not 1 <= change.after <= 5:
             raise ValueError("DPI stage count must be an integer in 1..5")
@@ -77,6 +83,8 @@ def encode_change(change: Change, *, polling_rate_for_fr_index: int | None = Non
         values = change.after
         if not isinstance(values, dict) or set(values) != {"gesture", "scroll"}:
             raise ValueError("force gesture-scroll setter requires both byte fields")
+        if any(type(value) is not int or not 0 <= value <= 15 for value in values.values()):
+            raise ValueError("force gesture/scroll values must be in 0..15")
         return build_request(
             NapeCommand.SET_FORCE_GESTURE_SCROLL, values["gesture"], values["scroll"]
         )
@@ -103,8 +111,8 @@ def encode_change(change: Change, *, polling_rate_for_fr_index: int | None = Non
             held >> 8,
         )
     if change.field == "combo":
-        if type(change.index) is not int or not 0 <= change.index <= 255:
-            raise ValueError("combo index must be a byte")
+        if type(change.index) is not int or not 0 <= change.index < RECORD_LIMIT:
+            raise ValueError("combo index must be in 0..29; bulk deletion is not exposed")
         if change.after is None:
             return build_request(NapeCommand.DELETE_COMBO, change.index)
         values = change.after
@@ -274,20 +282,20 @@ def _wait_nape_ack(
     raise TimeoutError(f"NAPE command 0x{command:02X} ACK timed out")
 
 
-def _validate_write_target(snapshot: dict[str, Any]) -> None:
-    # The unnumbered channel does not expose target-slot selection. Limit writes
-    # to the exact, unambiguous slot/PID and firmware observed during read tests.
-    state = bytes.fromhex(snapshot["raw"]["b2"])
-    if (
-        len(state) != 32
-        or state[:1] != b"\xb2"
-        or state[2:7] != bytes.fromhex("34 34 40 04 01")
-        or state[11] != 0
-        or state[16] != 0
-    ):
-        raise ValueError("writes require only Nape 3434:4004 connected in receiver slot 0")
-    if snapshot["firmware"].split(" ", 1)[0] != "v1.1.6-ZK":
-        raise ValueError("writes are restricted to the read-tested Nape firmware v1.1.6-ZK")
+def _validate_write_target(snapshot: dict[str, Any], transport: str) -> None:
+    # The receiver channel does not expose target-slot selection. Limit those
+    # writes to the exact, unambiguous slot/PID observed during read tests.
+    if transport == "link-km-raw-hid":
+        state = bytes.fromhex(snapshot["raw"]["b2"])
+        if (
+            len(state) != 32
+            or state[:1] != b"\xb2"
+            or state[2:7] != bytes.fromhex("34 34 40 04 01")
+            or state[11] != 0
+            or state[16] != 0
+        ):
+            raise ValueError("writes require only Nape 3434:4004 connected in receiver slot 0")
+    require_firmware(snapshot["firmware"])
 
 
 def _save_backup(path: Path, snapshot: dict[str, Any]) -> None:
@@ -313,7 +321,7 @@ def apply_config(
     the error reports whether write attempts started.
     """
     config = validate_config(config.to_dict())
-    validate_receiver(device_info)
+    transport = configuration_transport(device_info)
     if timeout_ms <= 0:
         raise ValueError("timeout must be positive")
     if write and backup is None:
@@ -330,6 +338,8 @@ def apply_config(
         macro_buffer = config.macro_buffer is not None or config.macros is not None
         before = read_snapshot_from_device(
             device,
+            transport=transport,
+            include_backup=write,
             include_keymap=write or bool(config.layers or config.tap_holds),
             include_device_settings=config.requires_device_settings,
             include_layer_orientations=layer_orientations,
@@ -338,12 +348,10 @@ def apply_config(
             include_force_gesture_scroll=bool(config.force_gesture_scroll),
             tap_hold_targets=tuple((entry.layer, entry.button) for entry in config.tap_holds),
             combo_targets=tuple(entry.index for entry in config.combos),
-            allow_missing_tap_holds=any(entry.create for entry in config.tap_holds),
-            allow_missing_combos=any(entry.create or entry.delete for entry in config.combos),
             timeout_ms=timeout_ms,
         )
         if write:
-            _validate_write_target(before)
+            _validate_write_target(before, transport)
         changes = plan_changes(config, before)
         if on_plan is not None:
             on_plan(changes)
@@ -364,7 +372,8 @@ def apply_config(
                 if change.field == "macro_buffer"
                 else [
                     encode_change(
-                        change, polling_rate_for_fr_index=before["polling_rate_for_fr_index"]
+                        change,
+                        polling_rate_for_fr_index=before["polling_rate_for_fr_index"],
                     )
                 ]
             )
@@ -375,7 +384,7 @@ def apply_config(
         try:
             for packet in packets:
                 if packet[1:3] == b"\xa7\x3d":
-                    # A fire-and-forget selection may be rejected; check before shrinking.
+                    # A zero status does not prove acceptance; check before shrinking.
                     current_index = request(device, b"\xa7\x21", timeout_ms)[2]
                     if current_index >= packet[3]:
                         raise ValueError(
@@ -390,26 +399,8 @@ def apply_config(
                     _wait_macro_buffer_ack(device, packet[1:], timeout_ms)
                 elif packet[1] == 0xA7:
                     subcommand = packet[2]
-                    ack_command = {0x2F: 0x25, 0x32: 0x32}.get(subcommand, subcommand)
-                    # Tested firmware omits the active-layer ACK and the ACK for tap-hold
-                    # deletion; their targeted read-backs below are authoritative.
-                    if subcommand != 0x2F and ack_command in (
-                        0x0C,
-                        0x25,
-                        0x27,
-                        0x29,
-                        0x2E,
-                        0x32,
-                        0x34,
-                        0x37,
-                        0x39,
-                    ):
-                        _wait_nape_ack(
-                            device,
-                            ack_command,
-                            timeout_ms,
-                            success_status=0 if subcommand in (0x0C, 0x32) else None,
-                        )
+                    if subcommand != 0x0E:
+                        _wait_nape_ack(device, subcommand, timeout_ms, success_status=0)
                     if subcommand == 0x3D:
                         # Do not select a newly enabled stage if firmware rejected the growth.
                         time.sleep(0.05)
@@ -419,60 +410,26 @@ def apply_config(
                                 "DPI stage count did not change; stopping before next setter"
                             )
                 time.sleep(0.05)
-            # DPI/polling/stage-count/active-layer setters are fire-and-forget; layer
-            # and stage changes are checked with reads. Tap-hold deletion also uses
-            # targeted read-back without an ACK; other setters wait for ACKs.
-            # Neither writes nor ACKs prove persistence.
+            # Neither zero-status ACKs nor immediate read-back prove persistence.
             time.sleep(0.2)
             after = read_snapshot_from_device(
-                device,
-                include_keymap=True,
-                include_device_settings=config.requires_device_settings,
-                include_macro_buffer=macro_buffer,
-                include_layer_orientations=layer_orientations,
-                include_gesture=bool(config.gesture),
-                include_force_gesture_scroll=bool(config.force_gesture_scroll),
-                tap_hold_targets=tuple((entry.layer, entry.button) for entry in config.tap_holds),
-                combo_targets=tuple(entry.index for entry in config.combos),
-                allow_missing_tap_holds=any(entry.delete for entry in config.tap_holds),
-                allow_missing_combos=any(entry.delete for entry in config.combos),
-                timeout_ms=timeout_ms,
+                device, transport=transport, include_backup=True, timeout_ms=timeout_ms
             )
-            _validate_write_target(after)
-            mismatches = [field for field in POINTER_FIELDS if after[field] != expected[field]]
-            if (
-                config.active_layer is not None
-                and config.orientation is None
-                and before["active_layer"] != expected["active_layer"]
-            ):
-                # A7 20 reports the selected layer's angle on tested firmware; switching
-                # layers can legitimately change it, and GET_LAYER_ORI is unusable here.
-                mismatches = [field for field in mismatches if field != "orientation"]
-            if after["polling_rate_for_fr_index"] != expected["polling_rate_for_fr_index"]:
-                mismatches.append("polling_rate_for_fr_index")
-            if after["layers"] != expected["layers"]:
-                mismatches.append("layers")
-            if (
-                config.active_layer is not None
-                and after["active_layer"] != expected["active_layer"]
-            ):
-                mismatches.append("active_layer")
-            if config.gesture and after["gesture"] != expected["gesture"]:
-                mismatches.append("gesture")
-            if (
-                config.force_gesture_scroll
-                and after["force_gesture_scroll"] != expected["force_gesture_scroll"]
-            ):
-                mismatches.append("force_gesture_scroll")
-            if config.tap_holds and after["tap_holds"] != expected["tap_holds"]:
-                mismatches.append("tap_holds")
-            if config.combos and after["combos"] != expected["combos"]:
-                mismatches.append("combos")
-            for field in DEVICE_FIELDS:
-                if field in expected and after[field] != expected[field]:
-                    mismatches.append(field)
-            if macro_buffer and after["macro_buffer"] != expected["macro_buffer"]:
-                mismatches.append("macro_buffer")
+            _validate_write_target(after, transport)
+            verified_fields = (
+                *POINTER_FIELDS,
+                "polling_rate_for_fr_index",
+                "layers",
+                "active_layer",
+                "gesture",
+                "force_gesture_scroll",
+                "tap_holds",
+                "combos",
+                *DEVICE_FIELDS,
+                "macro_buffer",
+                "default_layer",
+            )
+            mismatches = [field for field in verified_fields if after[field] != expected[field]]
             if mismatches:
                 raise ValueError(f"read-back mismatch: {', '.join(mismatches)}")
         except (OSError, RuntimeError, ValueError, KeyboardInterrupt) as exc:

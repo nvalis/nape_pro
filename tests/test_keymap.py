@@ -189,7 +189,7 @@ def test_keymap_encoder_rejects_invalid_address_or_code(change: Change) -> None:
 def test_cli_plan_requests_keymap_for_layer_config(mapped, monkeypatch, tmp_path, capsys) -> None:
     path = tmp_path / "config.json"
     path.write_text('{"schema_version":1,"layers":[{"layer":0,"buttons":{"M1":"0x0068"}}]}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: RECEIVER)
 
     def read(
         info,
@@ -202,8 +202,6 @@ def test_cli_plan_requests_keymap_for_layer_config(mapped, monkeypatch, tmp_path
         include_force_gesture_scroll=False,
         tap_hold_targets=(),
         combo_targets=(),
-        allow_missing_tap_holds=False,
-        allow_missing_combos=False,
         timeout_ms,
     ):
         assert include_keymap
@@ -214,7 +212,6 @@ def test_cli_plan_requests_keymap_for_layer_config(mapped, monkeypatch, tmp_path
         )
         assert not include_gesture and not include_force_gesture_scroll
         assert not tap_hold_targets and not combo_targets
-        assert not allow_missing_tap_holds and not allow_missing_combos
         return read_snapshot_from_device(mapped, include_keymap=True)
 
     monkeypatch.setattr(cli, "read_snapshot", read)

@@ -1,4 +1,4 @@
-"""Serialized, read-only requests on the Link-KM Raw HID channel."""
+"""Serialized, read-only requests on the receiver or USB Nape Raw HID channel."""
 
 from __future__ import annotations
 
@@ -6,7 +6,23 @@ import time
 from typing import Any
 
 READ_COMMANDS = {0x01, 0x0C, 0x0D, 0x0E, 0x11, 0x12, 0x14, 0xA0, 0xA1, 0xA3, 0xB1, 0xB2, 0xB3}
-MISC_READ_COMMANDS = {0x0B, 0x0D, 0x20, 0x21, 0x24, 0x26, 0x28, 0x2A, 0x31, 0x33, 0x36, 0x38, 0x3C}
+MISC_READ_COMMANDS = {
+    0x0B,
+    0x0D,
+    0x20,
+    0x21,
+    0x24,
+    0x26,
+    0x28,
+    0x2A,
+    0x31,
+    0x33,
+    0x35,
+    0x36,
+    0x38,
+    0x3A,
+    0x3C,
+}
 
 
 def request(device: Any, payload: bytes, timeout_ms: int = 1500) -> bytes:
@@ -36,7 +52,7 @@ def request(device: Any, payload: bytes, timeout_ms: int = 1500) -> bytes:
         elif payload[1] == 0x28:
             if len(payload) != 3:
                 raise ValueError("combo read requires one combo index")
-        elif payload[1] in (0x0B, 0x2A, 0x33, 0x36, 0x3C) and len(payload) != 2:
+        elif payload[1] in (0x0B, 0x2A, 0x33, 0x35, 0x36, 0x3A, 0x3C) and len(payload) != 2:
             raise ValueError("settings query takes no arguments")
         elif payload[1] == 0x38 and (len(payload) != 3 or not 0 <= payload[2] < 9):
             raise ValueError("per-layer orientation read requires a layer index in 0..8")

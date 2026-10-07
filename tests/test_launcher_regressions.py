@@ -46,7 +46,7 @@ def test_active_layer_is_the_unmodified_launcher_wire_value(layer) -> None:
 
 @pytest.mark.parametrize("layer", [0, 8])
 def test_active_layer_write_and_readback_use_same_index(fake, layer) -> None:
-    fake.current_layer = 1
+    fake.default_layer = fake.current_layer = 1
     result = apply_config(
         RECEIVER,
         validate_config({"schema_version": 1, "active_layer": layer}),
@@ -139,10 +139,9 @@ def test_encoder_ack_ignores_wrong_direction() -> None:
 
 
 @pytest.mark.parametrize("with_keymap", [False, True])
-def test_known_layer_orientation_failure_is_blocked_before_any_angle_query(
-    fake, with_keymap
-) -> None:
-    with pytest.raises(ValueError, match="per-layer orientation is unreadable"):
+def test_unsupported_firmware_is_blocked_before_any_angle_query(fake, with_keymap) -> None:
+    fake.firmware = b"v9.0.0-ZK"
+    with pytest.raises(ValueError, match="unsupported Nape firmware"):
         snapshot.read_snapshot(
             RECEIVER, include_keymap=with_keymap, include_layer_orientations=True
         )
@@ -270,7 +269,7 @@ def test_cli_macro_replacement_warns_about_destructive_reset(
 ) -> None:
     config = tmp_path / "macros.json"
     config.write_text('{"schema_version":1,"macros":[[{"type":"text","text":"hello"}],[]]}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: RECEIVER)
     args = cli._parser().parse_args(
         ["apply", str(config), "--write", "--backup", str(fake.backup_path)]
     )

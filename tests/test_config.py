@@ -4,6 +4,13 @@ from nape_cli import cli
 from nape_cli.config import load_config, plan_changes, validate_config
 
 CURRENT = {
+    "active_layer": 0,
+    "default_layer": 0,
+    "custom_dpi": 800,
+    "scroll_dpi": 400,
+    "dpi_stage_count": 5,
+    "sleep": {"backlight": 0, "sleep": 300, "magnet_scan": 0},
+    "record_inventory": True,
     "orientation": 90,
     "dpi_index": 2,
     "dpi_values": [450, 800, 1600, 3200, 4000],
@@ -126,7 +133,9 @@ def test_advanced_plan_merges_only_requested_values() -> None:
             "schema_version": 1,
             "active_layer": 1,
             "gesture": {"up": "0x0001"},
-            "tap_holds": [{"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1"}],
+            "tap_holds": [
+                {"layer": 0, "button": "M1", "tap": "0x0004", "held": "0x00E1", "create": True}
+            ],
             "combos": [{"index": 0, "layer": 0, "columns": 3, "tap": "0x0006", "held": "0x0005"}],
             "macros": [[{"type": "tap", "keycode": "0x0004"}]],
         }
@@ -240,7 +249,7 @@ def test_duplicate_fields_are_rejected(tmp_path) -> None:
 def test_offline_validation_does_not_select_hardware(monkeypatch, tmp_path, capsys) -> None:
     path = tmp_path / "config.json"
     path.write_text('{"schema_version": 1, "dpi_index": 1}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: pytest.fail("hardware queried"))
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: pytest.fail("hardware queried"))
     assert cli._run(cli._parser().parse_args(["validate", str(path)])) == 0
     assert "valid" in capsys.readouterr().out
 
@@ -248,6 +257,6 @@ def test_offline_validation_does_not_select_hardware(monkeypatch, tmp_path, caps
 def test_invalid_plan_does_not_select_hardware(monkeypatch, tmp_path) -> None:
     path = tmp_path / "config.json"
     path.write_text('{"schema_version": 1, "orientation": 1}')
-    monkeypatch.setattr(cli, "_select_receiver", lambda _: pytest.fail("hardware queried"))
+    monkeypatch.setattr(cli, "_select_configuration", lambda _: pytest.fail("hardware queried"))
     with pytest.raises(ValueError):
         cli._run(cli._parser().parse_args(["plan", str(path)]))

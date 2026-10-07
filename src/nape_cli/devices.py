@@ -12,6 +12,23 @@ NAPE_4K_USAGE_PAGE = 0xFF0A
 BRIDGE_USAGE_PAGE = 0x008C
 RAW_USAGE_PAGE = 0xFF60
 LINK_KM_PRODUCT_ID = 0xD026
+NAPE_USB_PRODUCT_ID = 0x0440
+
+
+def configuration_transport(device_info: dict[str, Any]) -> str:
+    """Identify only known configuration targets on the unnumbered Raw HID collection."""
+    if (
+        device_info.get("vendor_id") == KEYCHRON_VENDOR_ID
+        and device_info.get("usage_page") == RAW_USAGE_PAGE
+        and device_info.get("usage") == 0x61
+    ):
+        if device_info.get("product_id") == LINK_KM_PRODUCT_ID:
+            return "link-km-raw-hid"
+        if device_info.get("product_id") == NAPE_USB_PRODUCT_ID:
+            return "usb-raw-hid"
+    raise ValueError(
+        "requires Link-KM 3434:D026 or USB Nape Pro 3434:0440 Raw HID collection FF60:61"
+    )
 
 
 def hid_backend() -> Any:
@@ -42,7 +59,7 @@ def enumerate_devices(
         for device in devices
         if device.get("usage_page") in (NAPE_USAGE_PAGE, NAPE_4K_USAGE_PAGE, BRIDGE_USAGE_PAGE)
         or (
-            device.get("product_id") == LINK_KM_PRODUCT_ID
+            device.get("product_id") in (LINK_KM_PRODUCT_ID, NAPE_USB_PRODUCT_ID)
             and device.get("usage_page") == RAW_USAGE_PAGE
             and device.get("usage") == 0x61
         )

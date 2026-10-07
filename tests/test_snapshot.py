@@ -22,7 +22,7 @@ class FakeNape:
         self.response = b""
         self.layer_count = 9
         self.awake = True
-        self.layer_orientations = [0] * 9
+        self.layer_orientations = [90] + [0] * 8
         self.macro_count = 2
         self.macro_buffer = bytes(56)
         self.gesture = {"up": 0x0001, "down": 0x0002, "left": 0x0003, "right": 0x0004}
@@ -30,10 +30,12 @@ class FakeNape:
         self.tap_holds = {}
         self.combos = {0: {"timeout_ms": 200, "layer": 0, "columns": 3, "tap": 4, "held": 5}}
         self.current_layer = 0
+        self.default_layer = 0
         self.custom_dpi = 800
+        self.scroll_dpi = 400
         self.dpi_stage_count = 5
         self.sleep_settings = {"backlight": 0x0123, "sleep": 0x0456, "magnet_scan": 0x0789}
-        self.firmware = b"v1.1.6-ZK"
+        self.firmware = b"v1.3.0-ZK"
         self.secondary_rate_bitmap = 0
         self.secondary_rate_index = 0
 
@@ -61,8 +63,14 @@ class FakeNape:
             reply[1] = self.current_layer
         elif command == 0xA7:
             sub = payload[1]
-            if sub in (0x20, 0x21):
+            if sub == 0x20:
+                reply[2] = self.layer_orientations[self.current_layer] // 45
+            elif sub == 0x21:
                 reply[2] = 2
+            elif sub == 0x35:
+                reply[2] = self.default_layer
+            elif sub == 0x3A:
+                reply[2:4] = self.scroll_dpi.to_bytes(2, "little")
             elif sub == 0x24:
                 reply[2:4] = (450, 800, 1600, 3200, 4000)[payload[2]].to_bytes(2, "little")
             elif sub == 0x31:
@@ -169,7 +177,8 @@ def test_launcher_advanced_queries_decode_as_expected(device) -> None:
     assert result["macros"] == [[], []]
     assert result["gesture"] == {"up": 1, "down": 2, "left": 3, "right": 4}
     assert result["force_gesture_scroll"] == {"gesture": 0, "scroll": 0}
-    assert result["tap_holds"] == {"0:M1": None}
+    assert result["tap_holds"]["0:M1"] is None
+    assert result["record_inventory"] and len(result["tap_holds"]) == 63
     assert result["combos"]["0"] == {
         "timeout_ms": 200,
         "layer": 0,
@@ -182,14 +191,14 @@ def test_launcher_advanced_queries_decode_as_expected(device) -> None:
 
 
 def test_advanced_snapshot_reads_layer_orientations_and_macro_buffer(device) -> None:
-    device.firmware = b"v1.2.0"
+    device.firmware = b"v1.3.0-ZK"
     result = snapshot.read_snapshot(
         RECEIVER,
         include_keymap=True,
         include_layer_orientations=True,
         include_macro_buffer=True,
     )
-    assert [layer["orientation"] for layer in result["layers"]] == [0] * 9
+    assert [layer["orientation"] for layer in result["layers"]] == [90] + [0] * 8
     assert result["macro_count"] == 2
     assert result["macro_buffer_size"] == 56
     assert result["macro_buffer"] == bytes(56).hex()
@@ -253,7 +262,7 @@ def test_export_does_not_overwrite_existing_file(tmp_path) -> None:
 
 
 def test_export_writes_json_snapshot(device, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(cli, "_select_receiver", lambda index: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda index: RECEIVER)
     path = tmp_path / "snapshot.json"
     args = cli._parser().parse_args(["export", str(path)])
     assert cli._run(args) == 0
@@ -264,7 +273,7 @@ def test_export_writes_json_snapshot(device, monkeypatch, tmp_path) -> None:
 
 
 def test_advanced_export_includes_experimental_state(device, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(cli, "_select_receiver", lambda index: RECEIVER)
+    monkeypatch.setattr(cli, "_select_configuration", lambda index: RECEIVER)
     path = tmp_path / "advanced.json"
     args = cli._parser().parse_args(["export", str(path), "--advanced"])
     assert cli._run(args) == 0
@@ -282,10 +291,10 @@ def test_advanced_export_includes_experimental_state(device, monkeypatch, tmp_pa
 
 
 def test_layer_orientation_export_uses_explicit_flag(device, monkeypatch, tmp_path) -> None:
-    device.firmware = b"v1.2.0"
-    monkeypatch.setattr(cli, "_select_receiver", lambda index: RECEIVER)
+    device.firmware = b"v1.3.0-ZK"
+    monkeypatch.setattr(cli, "_select_configuration", lambda index: RECEIVER)
     path = tmp_path / "orientations.json"
     args = cli._parser().parse_args(["export", str(path), "--layer-orientations"])
     assert cli._run(args) == 0
     data = json.loads(path.read_text())
-    assert [layer["orientation"] for layer in data["layers"]] == [0] * 9
+    assert [layer["orientation"] for layer in data["layers"]] == [90] + [0] * 8

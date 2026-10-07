@@ -11,7 +11,14 @@ from typing import Any
 from . import __version__
 from .apply import apply_config
 from .config import Change, load_config, plan_changes
-from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
+from .devices import (
+    KEYCHRON_VENDOR_ID,
+    LINK_KM_PRODUCT_ID,
+    NAPE_USB_PRODUCT_ID,
+    RAW_USAGE_PAGE,
+    enumerate_devices,
+    path_text,
+)
 from .protocol import NapeCommand, build_request, orientation_units
 from .receiver import receiver_info
 from .snapshot import read_snapshot
@@ -44,11 +51,23 @@ def _parser() -> argparse.ArgumentParser:
         "protocol", help="show a candidate protocol packet without sending it"
     )
     protocol_parser.add_argument(
-        "operation", choices=("get-orientation", "get-dpi", "set-orientation")
+        "operation",
+        choices=(
+            "get-orientation",
+            "get-dpi",
+            "set-orientation",
+            "get-default-layer",
+            "get-custom-dpi",
+            "get-scroll-dpi",
+            "get-dpi-stage-count",
+            "get-layer-orientation",
+        ),
     )
     protocol_parser.add_argument(
         "--angle", type=int, help="orientation angle for set-orientation (0..315 in 45° steps)"
     )
+
+    protocol_parser.add_argument("--layer", type=int, help="layer for get-layer-orientation, 0..8")
 
     probe_parser = commands.add_parser(
         "probe", help="send a read-only protocol probe and show raw response bytes"
@@ -75,7 +94,7 @@ def _parser() -> argparse.ArgumentParser:
     status_parser.add_argument(
         "--advanced",
         action="store_true",
-        help="also read custom DPI, stage count, sleep, gestures, force-scroll, and macros",
+        help="also read firmware-specific DPI settings, sleep, gestures, force-scroll, and macros",
     )
     export_parser = commands.add_parser(
         "export", help="save pointer settings and all nine keymap layers"
@@ -86,13 +105,19 @@ def _parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--advanced",
         action="store_true",
-        help="also read custom DPI, stage count, sleep, gestures, force-scroll, and macros",
+        help="also read firmware-specific DPI settings, sleep, gestures, force-scroll, and macros",
     )
-    export_parser.add_argument(
-        "--layer-orientations",
-        action="store_true",
-        help="query per-layer orientation (unreliable on tested firmware)",
-    )
+    for subparser in (status_parser, export_parser):
+        subparser.add_argument(
+            "--layer-orientations",
+            action="store_true",
+            help="read all layer angles, requires firmware 1.3.0",
+        )
+        subparser.add_argument(
+            "--records",
+            action="store_true",
+            help="read all 30 combo slots and 63 tap-hold targets, requires firmware 1.3.0",
+        )
     validate_parser = commands.add_parser(
         "validate", help="validate a partial pointer/keymap JSON config offline"
     )
@@ -119,7 +144,9 @@ def _parser() -> argparse.ArgumentParser:
         "--backup", type=Path, help="new pre-write snapshot file; required for --write"
     )
     for subparser in (status_parser, export_parser, plan_parser, apply_parser):
-        subparser.add_argument("--index", type=int, help="receiver Raw HID collection index")
+        subparser.add_argument(
+            "--index", type=int, help="USB Nape or receiver Raw HID collection index"
+        )
         subparser.add_argument("--timeout-ms", type=int, default=1500)
     return parser
 
@@ -138,7 +165,15 @@ def _device_record(device: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
+def _select_configuration(index: int | None) -> dict[str, Any]:
+    return _select_raw_hid(index, (LINK_KM_PRODUCT_ID, NAPE_USB_PRODUCT_ID))
+
+
 def _select_receiver(index: int | None) -> dict[str, Any]:
+    return _select_raw_hid(index, (LINK_KM_PRODUCT_ID,))
+
+
+def _select_raw_hid(index: int | None, product_ids: tuple[int, ...]) -> dict[str, Any]:
     devices = enumerate_devices()
     if index is not None:
         if not 0 <= index < len(devices):
@@ -147,12 +182,16 @@ def _select_receiver(index: int | None) -> dict[str, Any]:
     candidates = [
         device
         for device in devices
-        if device.get("product_id") == LINK_KM_PRODUCT_ID
+        if device.get("vendor_id") == KEYCHRON_VENDOR_ID
+        and device.get("product_id") in product_ids
         and device.get("usage_page") == RAW_USAGE_PAGE
         and device.get("usage") == 0x61
     ]
+    target = "Link-KM receiver" if product_ids == (LINK_KM_PRODUCT_ID,) else "USB Nape or Link-KM"
+    if not candidates:
+        raise ValueError(f"no {target} Raw HID collection found; run `nape devices --all`")
     if len(candidates) != 1:
-        raise ValueError("expected one Link-KM Raw HID collection; use --index to select")
+        raise ValueError(f"multiple {target} Raw HID collections found; use --index to select")
     return candidates[0]
 
 
@@ -211,7 +250,7 @@ def _run(args: argparse.Namespace) -> int:
                 print("No changes needed.", file=output, flush=True)
 
         result = apply_config(
-            _select_receiver(args.index),
+            _select_configuration(args.index),
             config,
             write=args.write,
             backup=args.backup,
@@ -230,7 +269,7 @@ def _run(args: argparse.Namespace) -> int:
             print(json.dumps(config.to_dict(), indent=2) if args.json else "Configuration valid.")
             return 0
         current = read_snapshot(
-            _select_receiver(args.index),
+            _select_configuration(args.index),
             include_keymap=bool(config.layers or config.tap_holds or config.combos),
             include_device_settings=config.requires_device_settings,
             include_layer_orientations=any(
@@ -241,8 +280,6 @@ def _run(args: argparse.Namespace) -> int:
             include_force_gesture_scroll=bool(config.force_gesture_scroll),
             tap_hold_targets=tuple((entry.layer, entry.button) for entry in config.tap_holds),
             combo_targets=tuple(entry.index for entry in config.combos),
-            allow_missing_tap_holds=any(entry.create for entry in config.tap_holds),
-            allow_missing_combos=any(entry.create or entry.delete for entry in config.combos),
             timeout_ms=args.timeout_ms,
         )
         changes = plan_changes(config, current)
@@ -269,9 +306,19 @@ def _run(args: argparse.Namespace) -> int:
             command = {
                 "get-orientation": NapeCommand.GET_ORIENTATION,
                 "get-dpi": NapeCommand.GET_DPI,
+                "get-default-layer": NapeCommand.GET_DEFAULT_LAYER,
+                "get-custom-dpi": NapeCommand.GET_CUSTOM_DPI,
+                "get-scroll-dpi": NapeCommand.GET_SCROLL_DPI,
+                "get-dpi-stage-count": NapeCommand.GET_DPI_STAGE_COUNT,
+                "get-layer-orientation": NapeCommand.GET_LAYER_ORIENTATION,
             }[args.operation]
-            request = build_request(command)
-        print("Candidate 32-byte payload (not sent; Nape Pro framing is unverified):")
+            if args.operation == "get-layer-orientation":
+                if args.layer is None or not 0 <= args.layer < 9:
+                    raise ValueError("get-layer-orientation requires --layer in 0..8")
+                request = build_request(command, args.layer)
+            else:
+                request = build_request(command)
+        print("32-byte packet preview; nothing sent to the device:")
         print(request.hex(" "))
         return 0
 
@@ -279,10 +326,11 @@ def _run(args: argparse.Namespace) -> int:
         if args.command == "export" and args.output.exists():
             raise FileExistsError(f"snapshot already exists: {args.output}")
         result = read_snapshot(
-            _select_receiver(args.index),
+            _select_configuration(args.index),
             include_keymap=args.command == "export",
             include_device_settings=args.advanced,
-            include_layer_orientations=args.command == "export" and args.layer_orientations,
+            include_layer_orientations=args.layer_orientations,
+            include_records=args.records,
             include_macro_buffer=args.advanced,
             include_gesture=args.advanced,
             include_force_gesture_scroll=args.advanced,
@@ -294,9 +342,11 @@ def _run(args: argparse.Namespace) -> int:
             scope = "pointer settings and "
             scope += f"{result['layer_count']} layers"
             if args.advanced:
-                scope += ", custom DPI, DPI stage count, sleep, gesture/scroll settings, and macros"
+                scope += ", DPI settings, sleep, gestures, force-scroll, and macros"
             if args.layer_orientations:
                 scope += ", per-layer orientation"
+            if args.records:
+                scope += ", complete combo and tap-hold inventory"
             print(f"Saved {scope} to {args.output}")
         elif args.json:
             print(json.dumps(result, indent=2))
@@ -304,6 +354,7 @@ def _run(args: argparse.Namespace) -> int:
             print(f"Firmware: {result['firmware']}")
             print(f"Battery: {result['battery_percent']}% (charging: {result['charging']})")
             print(f"Layer: {result['active_layer']} (zero-based; {result['layer_count']} layers)")
+            print(f"Default layer: {result['default_layer']}; effective layer may differ")
             print(f"Orientation: {result['orientation']}°")
             print(f"DPI: {result['dpi']} (stage {result['dpi_index']}, zero-based)")
             print(f"DPI stages: {', '.join(map(str, result['dpi_values']))}")
@@ -311,6 +362,7 @@ def _run(args: argparse.Namespace) -> int:
             if args.advanced:
                 for field in (
                     "custom_dpi",
+                    "scroll_dpi",
                     "dpi_stage_count",
                     "sleep",
                     "gesture",
@@ -322,6 +374,14 @@ def _run(args: argparse.Namespace) -> int:
                     f"Macro buffer: {result['macro_buffer_size']} bytes "
                     f"({result['macro_count']} slots)"
                 )
+            if args.layer_orientations:
+                print(f"Layer orientations: {json.dumps(result['layer_orientations'])}")
+            if args.records:
+                for field in ("combos", "tap_holds"):
+                    nonempty = {
+                        key: value for key, value in result[field].items() if value is not None
+                    }
+                    print(f"{field}: {json.dumps(nonempty)}")
         return 0
 
     if args.command == "receiver-info":

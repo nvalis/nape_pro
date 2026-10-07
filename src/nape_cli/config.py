@@ -10,12 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .firmware import CUSTOM_DPI_RANGE, RECORD_LIMIT, SCROLL_DPI_RANGE
 from .macros import MacroStep, decode_macros, encode_macros
 from .protocol import orientation_units
 from .snapshot import BUTTON_ORDER, POLLING_RATES
 
 POINTER_FIELDS = ("dpi_values", "dpi_index", "orientation", "polling_rate")
-DEVICE_FIELDS = ("custom_dpi", "dpi_stage_count", "sleep")
+DEVICE_FIELDS = ("custom_dpi", "scroll_dpi", "dpi_stage_count", "sleep")
 SLEEP_FIELDS = ("backlight", "sleep", "magnet_scan")
 DIAL_ORDER = ("ccw", "cw")
 GESTURE_DIRECTIONS = ("up", "down", "left", "right")
@@ -98,6 +99,7 @@ class NapeConfig:
     polling_rate: int | None = None
     active_layer: int | None = None
     custom_dpi: int | None = None
+    scroll_dpi: int | None = None
     dpi_stage_count: int | None = None
     sleep: tuple[tuple[str, int], ...] = ()
     layers: tuple[LayerConfig, ...] = ()
@@ -110,7 +112,7 @@ class NapeConfig:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"schema_version": 1}
-        for name in (*POINTER_FIELDS, "custom_dpi", "dpi_stage_count"):
+        for name in (*POINTER_FIELDS, "custom_dpi", "scroll_dpi", "dpi_stage_count"):
             value = getattr(self, name)
             if value is not None:
                 result[name] = list(value) if isinstance(value, tuple) else value
@@ -136,7 +138,13 @@ class NapeConfig:
 
     @property
     def requires_device_settings(self) -> bool:
-        return self.custom_dpi is not None or self.dpi_stage_count is not None or bool(self.sleep)
+        return (
+            self.custom_dpi is not None
+            or self.scroll_dpi is not None
+            or self.dpi_stage_count is not None
+            or self.dpi_index is not None
+            or bool(self.sleep)
+        )
 
 
 @dataclass(frozen=True)
@@ -273,7 +281,7 @@ def _combos(value: object) -> tuple[ComboConfig, ...]:
     for item in value:
         if not isinstance(item, dict):
             raise ValueError("each combo entry must be an object")
-        index = _integer(item.get("index"), "combos.index", 0, 255)
+        index = _integer(item.get("index"), "combos.index", 0, RECORD_LIMIT - 1)
         if index in seen:
             raise ValueError(f"duplicate combo index: {index}")
         seen.add(index)
@@ -318,7 +326,7 @@ def _force_scroll(value: object) -> tuple[tuple[str, int], ...]:
     if not isinstance(value, dict) or not value or set(value) - set(FORCE_SCROLL_FIELDS):
         raise ValueError("force_gesture_scroll must contain gesture and/or scroll bytes")
     return tuple(
-        (field, _integer(value[field], f"force_gesture_scroll.{field}", 0, 255))
+        (field, _integer(value[field], f"force_gesture_scroll.{field}", 0, 15))
         for field in FORCE_SCROLL_FIELDS
         if field in value
     )
@@ -428,7 +436,14 @@ def validate_config(data: object) -> NapeConfig:
         _integer(data["active_layer"], "active_layer", 0, 8) if "active_layer" in data else None
     )
     custom_dpi = (
-        _integer(data["custom_dpi"], "custom_dpi", 1, 65535) if "custom_dpi" in data else None
+        _integer(data["custom_dpi"], "custom_dpi", *CUSTOM_DPI_RANGE)
+        if "custom_dpi" in data
+        else None
+    )
+    scroll_dpi = (
+        _integer(data["scroll_dpi"], "scroll_dpi", *SCROLL_DPI_RANGE)
+        if "scroll_dpi" in data
+        else None
     )
     dpi_stage_count = (
         _integer(data["dpi_stage_count"], "dpi_stage_count", 1, 5)
@@ -474,6 +489,7 @@ def validate_config(data: object) -> NapeConfig:
         polling_rate=polling_rate,
         active_layer=active_layer,
         custom_dpi=custom_dpi,
+        scroll_dpi=scroll_dpi,
         dpi_stage_count=dpi_stage_count,
         sleep=sleep,
         layers=layers,
@@ -504,6 +520,8 @@ def load_config(path: Path) -> NapeConfig:
 def desired_settings(config: NapeConfig, current: dict[str, Any]) -> dict[str, Any]:
     """Merge only requested settings/bindings, never modifying the snapshot."""
     config = validate_config(config.to_dict())
+    if (config.combos or config.tap_holds) and not current.get("record_inventory"):
+        raise ValueError("complete record inventory is required to plan record changes")
     if (
         config.polling_rate is not None
         and config.polling_rate not in current["supported_polling_rates"]
@@ -517,32 +535,40 @@ def desired_settings(config: NapeConfig, current: dict[str, Any]) -> dict[str, A
     result.update({key: value for key, value in config.to_dict().items() if key in POINTER_FIELDS})
     if "active_layer" in current:
         result["active_layer"] = current["active_layer"]
+    if "default_layer" in current:
+        result["default_layer"] = current["default_layer"]
     if config.active_layer is not None:
         if "active_layer" not in current:
             raise ValueError("active-layer state is required to plan layer switching")
         if config.orientation is not None and current["active_layer"] != config.active_layer:
             raise ValueError(
                 "switch active_layer and set orientation in separate applies; "
-                "orientation is layer-dependent on the tested firmware"
+                "orientation belongs to the effective layer"
             )
-        result["active_layer"] = config.active_layer
+        if "default_layer" not in current:
+            raise ValueError("default-layer state is required to plan layer switching")
+        if current["default_layer"] != config.active_layer:
+            result["active_layer"] = config.active_layer
+        result["default_layer"] = config.active_layer
     for field in DEVICE_FIELDS:
         if field in current:
             result[field] = copy.deepcopy(current[field])
-    if config.requires_device_settings and any(field not in current for field in DEVICE_FIELDS):
+    if config.requires_device_settings and any(
+        field not in current for field in ("custom_dpi", "dpi_stage_count", "sleep")
+    ):
         raise ValueError("custom DPI, stage-count, and sleep state must be read before planning")
+    if config.scroll_dpi is not None and current.get("scroll_dpi") is None:
+        raise ValueError("device returned no usable scroll-mode DPI; refusing to plan or write it")
     if config.custom_dpi is not None and current.get("custom_dpi") is None:
         raise ValueError("device returned no usable custom DPI value; refusing to plan or write it")
     if config.dpi_stage_count is not None and current.get("dpi_stage_count") is None:
         raise ValueError("device returned no usable DPI stage count; refusing to plan or write it")
-    for field in ("custom_dpi", "dpi_stage_count"):
+    for field in ("custom_dpi", "scroll_dpi", "dpi_stage_count"):
         value = getattr(config, field)
         if value is not None:
             result[field] = value
     if config.sleep:
         result["sleep"].update(dict(config.sleep))
-        if result["sleep"]["backlight"] == 0 and result["sleep"]["sleep"] == 0:
-            raise ValueError("sleep/backlight cannot both be zero: Launcher read-back is unusable")
     if (
         result.get("dpi_stage_count") is not None
         and (config.dpi_stage_count is not None or config.dpi_index is not None)
@@ -575,40 +601,68 @@ def desired_settings(config: NapeConfig, current: dict[str, Any]) -> dict[str, A
                 if "orientation" not in target:
                     raise ValueError("per-layer orientation data is required to plan this change")
                 target["orientation"] = layer.orientation
+    if "layers" in result and "orientation" in result["layers"][0]:
+        active = current["active_layer"]
+        if config.orientation is not None:
+            if active >= len(result["layers"]):
+                raise ValueError(
+                    "set orientation on an explicit keymap layer, not an internal layer"
+                )
+            explicit = next(
+                (entry.orientation for entry in config.layers if entry.layer == active), None
+            )
+            if explicit is not None and explicit != config.orientation:
+                raise ValueError("orientation conflicts with the active layer's orientation")
+            result["layers"][active]["orientation"] = config.orientation
+        selected = result["active_layer"]
+        if selected < len(result["layers"]):
+            result["orientation"] = result["layers"][selected]["orientation"]
+    for field in ("tap_holds", "combos", "macro_buffer"):
+        if field in current:
+            result[field] = copy.deepcopy(current[field])
     if config.tap_holds:
         if "tap_holds" not in current:
             raise ValueError("tap-hold state must be read before planning this change")
         result["tap_holds"] = copy.deepcopy(current["tap_holds"])
         for item in config.tap_holds:
             key = _tap_hold_key(item.layer, item.button)
-            if item.create and result["tap_holds"].get(key) is not None:
+            target = None if item.delete else {"tap": item.tap, "held": item.held}
+            if item.create and current["tap_holds"].get(key) not in (None, target):
                 raise ValueError(f"tap-hold {key} is not empty; refusing to overwrite it")
-            result["tap_holds"][key] = (
-                None
-                if item.delete
-                else {
-                    "tap": item.tap,
-                    "held": item.held,
-                }
-            )
+            if not item.create and not item.delete and result["tap_holds"].get(key) is None:
+                raise ValueError(f"tap-hold {key} is empty; use create explicitly")
+            result["tap_holds"][key] = target
+        if sum(value is not None for value in result["tap_holds"].values()) > RECORD_LIMIT:
+            raise ValueError("tap-hold capacity is 30 records")
     if config.combos:
         if "combos" not in current:
             raise ValueError("combo state must be read before planning this change")
         result["combos"] = copy.deepcopy(current["combos"])
         for item in config.combos:
-            if item.create and result["combos"].get(str(item.index)) is not None:
+            if item.create and current["combos"].get(str(item.index)) not in (
+                None,
+                _combo_record(item),
+            ):
                 raise ValueError(f"combo index {item.index} is not empty; refusing to overwrite it")
-            result["combos"][str(item.index)] = (
-                None
-                if item.delete
-                else {
-                    "layer": item.layer,
-                    "columns": item.columns,
-                    "tap": item.tap,
-                    "held": item.held,
-                    "timeout_ms": item.timeout_ms,
-                }
-            )
+            if (
+                not item.create
+                and not item.delete
+                and current["combos"].get(str(item.index)) is None
+            ):
+                raise ValueError(f"combo index {item.index} is empty; use create explicitly")
+            if not item.delete:
+                result["combos"][str(item.index)] = _combo_record(item)
+        for item in sorted(
+            (item for item in config.combos if item.delete), key=lambda item: -item.index
+        ):
+            if current["combos"][str(item.index)] is not None:
+                # Config indices refer to the original snapshot. Update first, delete
+                # in descending order, then verify every shifted and preserved slot.
+                for index in range(item.index, RECORD_LIMIT - 1):
+                    result["combos"][str(index)] = result["combos"][str(index + 1)]
+                result["combos"][str(RECORD_LIMIT - 1)] = None
+            else:
+                result["combos"][str(item.index)] = None
     macro_buffer = config.macro_buffer
     if config.macros is not None:
         required = ("macro_count", "macro_buffer_size", "via_protocol_version")
@@ -640,11 +694,22 @@ def desired_settings(config: NapeConfig, current: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _combo_record(item: ComboConfig) -> dict[str, Any]:
+    return {
+        "layer": item.layer,
+        "columns": item.columns,
+        "tap": item.tap,
+        "held": item.held,
+        "timeout_ms": item.timeout_ms,
+    }
+
+
 def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
     desired = desired_settings(config, current)
     changes = []
-    if config.active_layer is not None and current["active_layer"] != desired["active_layer"]:
-        changes.append(Change("active_layer", current["active_layer"], desired["active_layer"]))
+    layer_before = current.get("default_layer")
+    if config.active_layer is not None and layer_before != config.active_layer:
+        changes.append(Change("active_layer", layer_before, config.active_layer))
     count_change = (
         config.dpi_stage_count is not None
         and current["dpi_stage_count"] != desired["dpi_stage_count"]
@@ -655,6 +720,8 @@ def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
             Change("dpi_stage_count", current["dpi_stage_count"], desired["dpi_stage_count"])
         )
     for field in POINTER_FIELDS:
+        if getattr(config, field) is None:
+            continue
         if field == "dpi_values":
             for index, (before, after) in enumerate(
                 zip(current[field], desired[field], strict=True)
@@ -669,6 +736,8 @@ def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
         )
     if config.custom_dpi is not None and current["custom_dpi"] != desired["custom_dpi"]:
         changes.append(Change("custom_dpi", current["custom_dpi"], desired["custom_dpi"]))
+    if config.scroll_dpi is not None and current["scroll_dpi"] != desired["scroll_dpi"]:
+        changes.append(Change("scroll_dpi", current["scroll_dpi"], desired["scroll_dpi"]))
     if config.sleep and current["sleep"] != desired["sleep"]:
         changes.append(Change("sleep", current["sleep"], desired["sleep"]))
     for layer in config.layers:
@@ -681,7 +750,9 @@ def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
         if layer.orientation is not None:
             before = current["layers"][layer.layer]["orientation"]
             after = desired["layers"][layer.layer]["orientation"]
-            if before != after:
+            if before != after and not (
+                config.orientation is not None and layer.layer == current.get("active_layer")
+            ):
                 changes.append(Change("layer_orientation", before, after, layer=layer.layer))
     if config.gesture and current["gesture"] != desired["gesture"]:
         changes.append(Change("gesture", current["gesture"], desired["gesture"]))
@@ -696,15 +767,17 @@ def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
                 desired["force_gesture_scroll"],
             )
         )
-    for item in config.tap_holds:
+    for item in sorted(config.tap_holds, key=lambda item: not item.delete):
         key = _tap_hold_key(item.layer, item.button)
         before = current["tap_holds"][key]
         after = desired["tap_holds"][key]
         if before != after:
             changes.append(Change("tap_hold", before, after, layer=item.layer, binding=item.button))
-    for item in config.combos:
+    for item in sorted(
+        config.combos, key=lambda item: (item.delete, -item.index if item.delete else item.index)
+    ):
         before = current["combos"][str(item.index)]
-        after = desired["combos"][str(item.index)]
+        after = None if item.delete else _combo_record(item)
         if before != after:
             changes.append(Change("combo", before, after, index=item.index))
     has_macro_target = config.macro_buffer is not None or config.macros is not None
