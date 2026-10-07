@@ -6,6 +6,7 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 
 - [Agent guide](docs/agent-guide.md): safe inspection workflow, configuration limitations, and connection troubleshooting.
 - [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
+- [Pointer configuration](docs/configuration.md): JSON schema, offline validation, and read-only change planning.
 - [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
 
 ## Current status
@@ -13,6 +14,8 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 Implemented: HID discovery and read-only Link-KM receiver queries, tested against hardware `3434:D026`. The receiver's **FF60:61 Raw HID collection** accepts unnumbered 32-byte payloads for protocol (`0xB1`), paired-device state (`0xB2`), and firmware (`0xB3`) queries. Unsolicited `0xBC` notifications are skipped when waiting for replies.
 
 Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. All Raw HID requests go through a read-command allowlist.
+
+`validate` checks a partial pointer JSON config offline; `plan` compares it with the device without writing. See [Pointer configuration](docs/configuration.md).
 
 It does **not** write settings yet. Direct USB transport is still unverified. `probe` is experimental, rejects the Link-KM receiver, and sends only read commands. `protocol set-orientation` only prints a packet.
 

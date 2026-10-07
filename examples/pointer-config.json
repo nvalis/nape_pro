@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "orientation": 90,
+  "dpi_index": 2,
+  "dpi_values": [450, 800, 1600, 3200, 4000],
+  "polling_rate": 1000
+}

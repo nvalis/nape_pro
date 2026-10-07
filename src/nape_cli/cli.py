@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .config import load_config, plan_changes
 from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
 from .protocol import NapeCommand, build_request, orientation_units
 from .receiver import receiver_info
@@ -76,7 +77,19 @@ def _parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "output", type=Path, help="new JSON snapshot file (never overwritten)"
     )
-    for subparser in (status_parser, export_parser):
+    validate_parser = commands.add_parser(
+        "validate", help="validate a partial pointer JSON config offline"
+    )
+    validate_parser.add_argument("config", type=Path)
+    validate_parser.add_argument(
+        "--json", action="store_true", help="print normalized configuration"
+    )
+    plan_parser = commands.add_parser(
+        "plan", help="preview pointer changes without writing settings"
+    )
+    plan_parser.add_argument("config", type=Path)
+    plan_parser.add_argument("--json", action="store_true", help="print a machine-readable diff")
+    for subparser in (status_parser, export_parser, plan_parser):
         subparser.add_argument("--index", type=int, help="receiver Raw HID collection index")
         subparser.add_argument("--timeout-ms", type=int, default=1500)
     return parser
@@ -133,6 +146,25 @@ def _run(args: argparse.Namespace) -> int:
                     f"usage_page={record['usage_page']:#06x} usage={record['usage']:#04x} "
                     f"interface={record['interface_number']}\n    path={record['path']}"
                 )
+        return 0
+
+    if args.command in ("validate", "plan"):
+        config = load_config(args.config)
+        if args.command == "validate":
+            print(json.dumps(config.to_dict(), indent=2) if args.json else "Configuration valid.")
+            return 0
+        current = read_snapshot(_select_receiver(args.index), timeout_ms=args.timeout_ms)
+        changes = plan_changes(config, current)
+        if args.json:
+            print(
+                json.dumps({"mode": "dry-run", "changes": [c.to_dict() for c in changes]}, indent=2)
+            )
+        else:
+            print("Dry-run: no settings written.")
+            for change in changes:
+                print(f"{change.setting}: {change.before} -> {change.after}")
+            if not changes:
+                print("No changes needed.")
         return 0
 
     if args.command == "protocol":

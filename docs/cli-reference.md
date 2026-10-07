@@ -12,6 +12,8 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 | `nape receiver-info` | Read receiver protocol, firmware, paired slots | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: include raw packets |
 | `nape status` | Read Nape pointer settings and battery | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: all fields and raw packets |
 | `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
+| `nape validate CONFIG` | Validate a partial pointer JSON config offline | Required config path; `--json`: normalized config |
+| `nape plan CONFIG` | Read current settings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
 | `nape protocol get-orientation` | Print a zero-padded `A7 20` payload; send nothing | No required options |
 | `nape protocol get-dpi` | Print an `A7 21` payload; send nothing | No required options |
 | `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; **does not set orientation** | `--angle` required, one of `0,45,90,135,180,225,270,315` |
@@ -28,6 +30,8 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 - Timeouts are positive milliseconds **per request**, not a total command duration. Status makes 13 requests; export makes 40.
 - `probe` requires a mouse usage page `FFC1` or `FF0A`, rejects Link-KM `D026`, and is not the normal receiver workflow. Report IDs accept decimal or `0x` notation, range `0..255`. It prints raw bytes and can return success with no response.
 - Normal success exits `0`; handled argument/device/file errors exit `2` and write an error to stderr. An empty discovery list is still success. Help/version exit `0`.
+
+The [configuration guide](configuration.md) describes the separate partial-config schema. Config files are not exported snapshots; there is still no apply command.
 
 ## Available settings and observations
 
