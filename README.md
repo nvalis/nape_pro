@@ -6,18 +6,20 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 
 - [Agent guide](docs/agent-guide.md): safe inspection workflow, configuration limitations, and connection troubleshooting.
 - [CLI and settings reference](docs/cli-reference.md): every CLI command/option, JSON field, and feature's support status.
-- [Pointer configuration](docs/configuration.md): JSON schema, offline validation, and read-only change planning.
+- [Pointer configuration](docs/configuration.md): JSON schema, validation/planning, and experimental apply with snapshot and verification.
 - [Protocol reference](docs/protocol-reference.md): verified read layouts and the full known NAPE command list, including unimplemented settings.
 
 ## Current status
 
 Implemented: HID discovery and read-only Link-KM receiver queries, tested against hardware `3434:D026`. The receiver's **FF60:61 Raw HID collection** accepts unnumbered 32-byte payloads for protocol (`0xB1`), paired-device state (`0xB2`), and firmware (`0xB3`) queries. Unsolicited `0xBC` notifications are skipped when waiting for replies.
 
-Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. All Raw HID requests go through a read-command allowlist.
+Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. Read requests go through a read-command allowlist; experimental pointer setters use a separate, restricted write path.
 
 `validate` checks a partial pointer JSON config offline; `plan` compares it with the device without writing. See [Pointer configuration](docs/configuration.md).
 
-It does **not** write settings yet. Direct USB transport is still unverified. `probe` is experimental, rejects the Link-KM receiver, and sends only read commands. `protocol set-orientation` only prints a packet.
+`apply` defaults to dry-run. Experimental pointer writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Writes are covered by simulated-device tests, **not yet real-device write tests**. Read-back verifies changed and unchanged pointer fields and checks the keymap stayed unchanged; failures may leave partial changes and are not automatically rolled back.
+
+Direct USB transport is still unverified. `probe` rejects the Link-KM receiver and sends only read commands. `protocol set-orientation` only prints a packet.
 
 Reference notes:
 
@@ -41,7 +43,7 @@ Linux uses the `hidraw` backend when available, avoiding the libusb backend's mi
 
 In WSL, attach the receiver/device with `usbipd attach --wsl --busid <busid>` from Windows. Sharing alone is not attachment. While attached, the receiver is unavailable to Windows; restore it with `usbipd detach --busid <busid>`.
 
-Receiver and wireless Nape **reads** are supported. Settings writes, direct USB Nape access, and Bluetooth are not yet implemented.
+Receiver and wireless Nape reads are supported, with experimental pointer-only writes. Keymap writes, direct USB Nape access, and Bluetooth are not yet implemented.
 
 ## Usage
 
@@ -72,6 +74,16 @@ uv run nape export nape-snapshot.json
 These commands require an awake Nape in 2.4 GHz mode. Export never overwrites an existing file. Layer and DPI-stage indices are zero-based. Button names are `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press`; the dial has `ccw`/`cw` keycodes. Keycodes are hex values, not host keyboard shortcuts.
 
 **An export is not a complete firmware backup**: it does not include macros, tap-holds, combos, gestures, or per-layer orientation. It cannot be applied/restored yet. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
+
+Validate and preview a partial pointer configuration:
+
+```sh
+uv run nape validate examples/pointer-config.json
+uv run nape plan examples/pointer-config.json
+uv run nape apply examples/pointer-config.json --dry-run
+```
+
+After reviewing the diff and explicitly choosing to write, use `nape apply CONFIG --write --backup NEW_FILE`. See [Pointer configuration](docs/configuration.md) for limitations and recovery guidance. Exported snapshots are not accepted as configs.
 
 Show candidate packets without sending them:
 

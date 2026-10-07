@@ -29,7 +29,7 @@ def probe(
     ):
         raise ValueError(
             "this interface is not identified as a direct mouse collection; "
-            "receiver tunneling is not implemented yet"
+            "receiver tunneling is not implemented by probe; use status/plan/apply for Link-KM"
         )
     if not 0 <= report_id <= 0xFF:
         raise ValueError("report ID must be in the range 0..255")

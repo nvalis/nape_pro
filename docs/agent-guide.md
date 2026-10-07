@@ -1,8 +1,8 @@
 # Agent guide: working with a Nape Pro
 
-**Current CLI: 0.1.0, read-only.** You can inspect settings and export the keymap, but cannot apply a configuration yet. There is no `apply`, `set`, `restore`, YAML loader, or dry-run apply command. Editing an exported JSON file does not change the device.
+**Current CLI: 0.2.0.** Reads are hardware-tested; pointer-setting writes are experimental and simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Keymap writes, full restore, and YAML loading are not implemented. Editing an export does not change the device.
 
-See the [CLI/settings reference](cli-reference.md) for every command and field, and the [protocol reference](protocol-reference.md) for known commands not yet implemented.
+See the [configuration guide](configuration.md) for the JSON schema, write guards, and failure recovery; the [CLI/settings reference](cli-reference.md) for every command/field; and the [protocol reference](protocol-reference.md) for implementation status.
 
 ## Normal workflow
 
@@ -18,7 +18,7 @@ uv run nape export nape-before.json
 
 - Tested transport: Nape in **2.4 GHz mode**, awake, through Link-KM receiver `3434:D026`.
 - Configuration channel: usage page **`0xFF60`**, usage **`0x61`**. Do not use its normal keyboard/mouse interfaces.
-- `receiver-info`, `status`, and `export` select one receiver automatically. For multiple receivers, pass `--index N` using a fresh **default** `nape devices` listing, not `devices --all`.
+- `receiver-info`, `status`, `export`, `plan`, and `apply` select one receiver automatically. For multiple receivers, pass `--index N` using a fresh **default** `nape devices` listing, not `devices --all`.
 - JSON IDs are decimal: receiver VID/PID `13364`/`53286`, Raw HID usage page/usage `65376`/`97`.
 - Keep the device stationary while exporting; reads are not an atomic snapshot.
 - Export refuses to overwrite files and does not create parent directories. Use a new filename in an existing directory.
@@ -26,10 +26,10 @@ uv run nape export nape-before.json
 ## Handling a request to configure
 
 1. Read status and export the current state before proposing changes.
-2. Confirm the desired angle, DPI stages, polling rate, layer, button, and dial actions. Use zero-based layer/stage indices and preserve unspecified settings.
-3. Explain which requested settings are supported for reading and which are unimplemented. Do not invent write commands or assume hex keycodes are portable across firmware versions.
-4. **Stop before applying:** this CLI has no settings-write support. Offer to implement a narrowly scoped writer or have the user use Keychron Launcher. Do not bypass the read-only allowlist with ad-hoc packets.
-5. After a user changes settings through another tool, re-run `status` and export to a new file to compare results.
+2. Confirm the desired settings. Write a partial JSON config for orientation, five DPI values, DPI-stage selection, or supported polling rate. Use zero-based stage indices; omitted settings are preserved. Layers/buttons/dial bindings can only be inspected, not edited yet.
+3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose that real-device setter behavior/persistence remains unverified.
+4. Obtain explicit user approval for the exact changes before `nape apply CONFIG --write --backup NEW_FILE`. Do not treat a generic request to inspect/build/test the CLI as permission to alter settings. Write guards require the observed firmware/slot combination; do not bypass them with raw packets.
+5. Apply verifies read-back and keymap preservation. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
 
 An export covers pointer settings, seven button entries per layer, and two dial directions across nine layers. It is **not a complete backup**: macros, tap-holds, combos, gestures, and per-layer orientation are omitted. There is no restore command.
 
@@ -55,7 +55,7 @@ Attaching takes the receiver away from Windows. Obtain permission before doing t
 
 ## When extending the CLI
 
-Keep read and write paths separate. A future writer needs validated inputs, a visible diff/dry-run, explicit user approval, a prior snapshot, and read-back verification. Unknown settings must remain untouched; unsupported rollback must be disclosed. Commit implementation in logical blocks and run:
+Keep read and write paths separate. Preserve validated inputs, visible diff/dry-run, explicit approval, pre-write snapshot, and read-back checks when adding setters. Unknown settings must remain untouched; unsupported rollback must be disclosed. Extend hardware support only after targeted verification. Commit implementation in logical blocks and run:
 
 ```sh
 uv sync --extra dev --extra hardware

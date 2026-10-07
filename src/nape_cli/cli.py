@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .config import load_config, plan_changes
+from .apply import apply_pointer_config
+from .config import Change, load_config, plan_changes
 from .devices import LINK_KM_PRODUCT_ID, RAW_USAGE_PAGE, enumerate_devices, path_text
 from .protocol import NapeCommand, build_request, orientation_units
 from .receiver import receiver_info
@@ -89,7 +90,20 @@ def _parser() -> argparse.ArgumentParser:
     )
     plan_parser.add_argument("config", type=Path)
     plan_parser.add_argument("--json", action="store_true", help="print a machine-readable diff")
-    for subparser in (status_parser, export_parser, plan_parser):
+    apply_parser = commands.add_parser(
+        "apply", help="preview pointer changes; experimental writes require --write and --backup"
+    )
+    apply_parser.add_argument("config", type=Path)
+    apply_parser.add_argument("--json", action="store_true", help="print the result as JSON")
+    apply_mode = apply_parser.add_mutually_exclusive_group()
+    apply_mode.add_argument(
+        "--write", action="store_true", help="explicitly authorize settings writes"
+    )
+    apply_mode.add_argument("--dry-run", action="store_true", help="preview only (the default)")
+    apply_parser.add_argument(
+        "--backup", type=Path, help="new pre-write snapshot file; required for --write"
+    )
+    for subparser in (status_parser, export_parser, plan_parser, apply_parser):
         subparser.add_argument("--index", type=int, help="receiver Raw HID collection index")
         subparser.add_argument("--timeout-ms", type=int, default=1500)
     return parser
@@ -146,6 +160,43 @@ def _run(args: argparse.Namespace) -> int:
                     f"usage_page={record['usage_page']:#06x} usage={record['usage']:#04x} "
                     f"interface={record['interface_number']}\n    path={record['path']}"
                 )
+        return 0
+
+    if args.command == "apply":
+        config = load_config(args.config)
+        # Reject missing/irrelevant backup flags before selecting any hardware.
+        if args.write and args.backup is None:
+            raise ValueError("--write requires --backup with a new snapshot path")
+        if not args.write and args.backup is not None:
+            raise ValueError("--backup is only used with --write")
+        if args.backup is not None and args.backup.exists():
+            raise FileExistsError(f"backup already exists: {args.backup}")
+
+        def show_plan(changes: list[Change]) -> None:
+            output = sys.stderr if args.json else sys.stdout
+            mode = "Experimental write requested" if args.write else "Dry-run: no settings written"
+            print(mode + ".", file=output, flush=True)
+            for change in changes:
+                print(
+                    f"{change.setting}: {change.before} -> {change.after}", file=output, flush=True
+                )
+            if args.write and changes:
+                print(f"Pre-write snapshot path: {args.backup}", file=output, flush=True)
+            if not changes:
+                print("No changes needed.", file=output, flush=True)
+
+        result = apply_pointer_config(
+            _select_receiver(args.index),
+            config,
+            write=args.write,
+            backup=args.backup,
+            timeout_ms=args.timeout_ms,
+            on_plan=show_plan,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif result["mode"] == "applied":
+            print(f"Applied and read-back verified. Snapshot: {result['backup']}")
         return 0
 
     if args.command in ("validate", "plan"):

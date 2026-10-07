@@ -1,6 +1,6 @@
 # CLI and settings reference
 
-Scope: `nape-cli` **0.1.0**. All device operations are reads; `export` only writes a local file. Verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
+Scope: `nape-cli` **0.2.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Pointer setters are experimental, **not yet hardware-tested**. `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
 
 ## Complete CLI command list
 
@@ -14,6 +14,7 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 | `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
 | `nape validate CONFIG` | Validate a partial pointer JSON config offline | Required config path; `--json`: normalized config |
 | `nape plan CONFIG` | Read current settings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
+| `nape apply CONFIG` | Dry-run by default; optionally apply changed pointer settings | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
 | `nape protocol get-orientation` | Print a zero-padded `A7 20` payload; send nothing | No required options |
 | `nape protocol get-dpi` | Print an `A7 21` payload; send nothing | No required options |
 | `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; **does not set orientation** | `--angle` required, one of `0,45,90,135,180,225,270,315` |
@@ -31,11 +32,11 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 - `probe` requires a mouse usage page `FFC1` or `FF0A`, rejects Link-KM `D026`, and is not the normal receiver workflow. Report IDs accept decimal or `0x` notation, range `0..255`. It prints raw bytes and can return success with no response.
 - Normal success exits `0`; handled argument/device/file errors exit `2` and write an error to stderr. An empty discovery list is still success. Help/version exit `0`.
 
-The [configuration guide](configuration.md) describes the separate partial-config schema. Config files are not exported snapshots; there is still no apply command.
+The [configuration guide](configuration.md) describes the separate partial-config schema, write guardrails, result JSON, and recovery. Config files are not exported snapshots. Offline validation does not check the connected device's rate support. Apply preview never creates a backup; a write-mode no-op also creates none.
 
 ## Available settings and observations
 
-Every field below is **read-only through this CLI**. `status --json` and `export` contain the same top-level fields, except that only export includes `layers`.
+`status --json` and `export` contain the same top-level fields, except that only export includes `layers`. Only **`orientation`, `dpi_index`, `dpi_values`, and `polling_rate`** have experimental setters through `apply`; all other fields are observations/metadata, not accepted config inputs.
 
 | JSON field | Meaning / domain | Notes |
 |---|---|---|
@@ -115,11 +116,10 @@ Slots use indices `0..2`; `connected` means status byte equals `1`. Empty slots 
 
 ## Known features not exposed by this CLI
 
-These are protocol/source findings, **not guarantees that this firmware supports them**. No reads/exports/writes for them are implemented unless stated above. Command IDs are in the [protocol reference](protocol-reference.md).
+These are protocol/source findings, **not guarantees that this firmware supports them**. Except for the four pointer setters already described, the following features remain unimplemented. Command IDs are in the [protocol reference](protocol-reference.md).
 
 | Feature | Meaning |
 |---|---|
-| DPI/angle/polling-rate setters | Writing the pointer settings currently readable through `status` |
 | Button/encoder setters | Editing a layer's button bindings or dial rotations |
 | Active-layer switching | Selecting a layer on the device |
 | Per-layer orientation | Different trackball angle per layer |

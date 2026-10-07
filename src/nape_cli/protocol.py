@@ -1,8 +1,8 @@
 """Known NAPE command IDs and a conservative candidate request encoder.
 
 The command IDs come from the reverse-engineered Keychron Launcher protocol
-notes linked in README.md. The packet envelope and Nape Pro compatibility have
-not yet been verified against a physical device.
+notes linked in README.md. Reads through the Link-KM Raw HID collection have
+been verified on-device; direct USB framing and pointer writes remain unverified.
 """
 
 from __future__ import annotations
