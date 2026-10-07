@@ -27,7 +27,17 @@ class WritableNape(FakeNape):
         self.change_keymap = False
 
     def write(self, packet: bytes) -> int:
-        if packet[1:3] in (b"\xa7\x22", b"\xa7\x23", b"\xa7\x34", b"\xa7\x0e"):
+        if (
+            packet[1:3]
+            in (
+                b"\xa7\x22",
+                b"\xa7\x23",
+                b"\xa7\x34",
+                b"\xa7\x0e",
+                b"\xa7\x39",
+            )
+            or packet[1] == 0x0F
+        ):
             assert self.backup_path is not None and self.backup_path.is_file()
             backup = json.loads(self.backup_path.read_text())
             assert len(backup["layers"]) == 9
@@ -35,15 +45,24 @@ class WritableNape(FakeNape):
             if len(self.setters) == self.fail_write_number:
                 raise OSError("simulated USB failure")
             if not self.reject_writes:
-                sub = packet[2]
-                if sub == 0x22:
-                    self.dpi_index = packet[3]
-                elif sub == 0x23:
-                    self.dpi_values[packet[3]] = int.from_bytes(packet[4:6], "little")
-                elif sub == 0x34:
-                    self.orientation = packet[3] * 45
-                elif sub == 0x0E:
-                    self.rate_index = packet[3]
+                if packet[1] == 0x0F:
+                    offset = int.from_bytes(packet[2:4], "big")
+                    size = packet[4]
+                    buffer = bytearray(self.macro_buffer)
+                    buffer[offset : offset + size] = packet[5 : 5 + size]
+                    self.macro_buffer = bytes(buffer)
+                else:
+                    sub = packet[2]
+                    if sub == 0x22:
+                        self.dpi_index = packet[3]
+                    elif sub == 0x23:
+                        self.dpi_values[packet[3]] = int.from_bytes(packet[4:6], "little")
+                    elif sub == 0x34:
+                        self.orientation = packet[3] * 45
+                    elif sub == 0x0E:
+                        self.rate_index = packet[3]
+                    elif sub == 0x39:
+                        self.layer_orientations[packet[3]] = packet[4] * 45
             return len(packet)
         count = super().write(packet)
         reply = bytearray(self.response)
@@ -108,6 +127,31 @@ def test_explicit_apply_saves_backup_then_verifies_all_pointer_fields(writable) 
     assert all(len(packet) == 33 for packet in writable.setters)
     assert json.loads(writable.backup_path.read_text())["orientation"] == 90
     assert writable.closed
+
+
+def test_apply_per_layer_orientation_saves_and_verifies_full_layers(writable) -> None:
+    config = validate_config({"schema_version": 1, "layers": [{"layer": 3, "orientation": 135}]})
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["mode"] == "applied" and result["verified"]
+    assert writable.layer_orientations[3] == 135
+    assert writable.setters[0][1:5] == bytes.fromhex("a7 39 03 03")
+    backup = json.loads(writable.backup_path.read_text())
+    assert backup["layers"][3]["orientation"] == 0
+
+
+def test_apply_macro_buffer_in_chunks_and_read_back(writable) -> None:
+    target = bytes(reversed(range(56))).hex()
+    config = validate_config({"schema_version": 1, "macro_buffer": target})
+    result = apply_pointer_config(RECEIVER, config, write=True, backup=writable.backup_path)
+    assert result["mode"] == "applied" and result["verified"]
+    assert writable.macro_buffer.hex() == target
+    macro_packets = [packet for packet in writable.setters if packet[1] == 0x0F]
+    assert [(packet[2], packet[3], packet[4]) for packet in macro_packets] == [
+        (0, 0, 28),
+        (0, 28, 28),
+    ]
+    backup = json.loads(writable.backup_path.read_text())
+    assert backup["macro_buffer"] == bytes(range(56)).hex()
 
 
 def test_missing_backup_is_rejected_before_opening_hardware(monkeypatch) -> None:

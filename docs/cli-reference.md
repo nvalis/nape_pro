@@ -1,6 +1,6 @@
 # CLI and settings reference
 
-Scope: `nape-cli` **0.3.0**. Reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Active DPI-stage selection/restoration is hardware-tested; other pointer/keymap setters remain simulated-device tested only. See the [hardware log](hardware-tests.md). `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
+Scope: `nape-cli` **0.3.0**. Core reads are verified on Link-KM `3434:D026` firmware `0.1.3` and Nape firmware `v1.1.6-ZK`. Active DPI-stage selection/restoration is hardware-tested; other pointer/keymap, per-layer orientation, and macro-buffer setters remain simulated-device tested only. See the [hardware log](hardware-tests.md). `apply` is dry-run unless explicitly authorized with `--write --backup NEW_FILE`; see [configuration](configuration.md). Direct USB Nape access and Bluetooth are not implemented. Start with the [agent guide](agent-guide.md).
 
 ## Complete CLI command list
 
@@ -11,10 +11,10 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 | `nape devices` | List relevant Keychron HID collections | `--json`: JSON array; `--all`: all collections with VID `0x3434` |
 | `nape receiver-info` | Read receiver protocol, firmware, paired slots | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: include raw packets |
 | `nape status` | Read Nape pointer settings and battery | `--index N`: optional selection; `--timeout-ms 1500`; `--json`: all fields and raw packets |
-| `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
-| `nape validate CONFIG` | Validate a partial pointer/keymap JSON config offline | Required config path; `--json`: normalized config |
+| `nape export OUTPUT` | Read settings and nine keymap layers into a new JSON file | Required file path; `--advanced` also reads per-layer orientation and the VIA macro buffer (experimental); `--index N`; `--timeout-ms 1500`; no overwrite/force flag |
+| `nape validate CONFIG` | Validate a partial pointer/keymap/orientation/macro-buffer JSON config offline | Required config path; `--json`: normalized config |
 | `nape plan CONFIG` | Read current settings/bindings and preview changes, never write | Required config path; `--index N`; `--timeout-ms 1500`; `--json`: diff |
-| `nape apply CONFIG` | Dry-run by default; optionally apply changed pointer settings/bindings | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
+| `nape apply CONFIG` | Dry-run by default; optionally apply changed pointer settings, bindings, per-layer orientation, and macro buffer | Required config path; `--write` or `--dry-run` (mutually exclusive); `--backup NEW_FILE` required only with `--write`; `--index N`; `--timeout-ms 1500`; `--json` |
 | `nape protocol get-orientation` | Print a zero-padded `A7 20` payload; send nothing | No required options |
 | `nape protocol get-dpi` | Print an `A7 21` payload; send nothing | No required options |
 | `nape protocol set-orientation --angle DEGREES` | Print `A7 34 angle/45`; **does not set orientation** | `--angle` required, one of `0,45,90,135,180,225,270,315` |
@@ -28,7 +28,7 @@ Prefix every command below with `uv run` from the repository. Global flags: `nap
 - Multiple collections may share a path; interface numbers and indices are not interchangeable.
 - Receiver commands auto-select exactly one `3434:D026`, `FF60:61` collection. They validate explicit selections too. Zero or multiple auto-selection candidates produce an error.
 - `status`/`export` require a connected paired slot and exactly nine reported layers. Receiver diagnostics can work while the Nape is asleep.
-- Timeouts are positive milliseconds **per request**, not a total command duration. Status makes 13 requests; export makes 40.
+- Timeouts are positive milliseconds **per request**, not a total command duration. Status makes 13 requests; standard export makes 40. `export --advanced` adds nine orientation reads and macro metadata/buffer reads (number depends on buffer size).
 - `probe` requires a mouse usage page `FFC1` or `FF0A`, rejects Link-KM `D026`, and is not the normal receiver workflow. Report IDs accept decimal or `0x` notation, range `0..255`. It prints raw bytes and can return success with no response.
 - Normal success exits `0`; handled argument/device/file errors exit `2` and write an error to stderr. An empty discovery list is still success. Help/version exit `0`.
 
@@ -36,7 +36,7 @@ The [configuration guide](configuration.md) describes the separate partial-confi
 
 ## Available settings and observations
 
-`status --json` and `export` contain the same top-level fields, except that only export includes `layers`. **`orientation`, `dpi_index`, `dpi_values`, `polling_rate`, and partial `layers` bindings** are accepted config inputs for guarded apply; all other fields are observations/metadata.
+`status --json` and standard `export` contain the same top-level fields, except that only export includes `layers`. Advanced export adds per-layer orientation and macro-buffer metadata. **`orientation`, `dpi_index`, `dpi_values`, `polling_rate`, partial `layers` bindings/orientations, and `macro_buffer`** are accepted config inputs for guarded apply; all other fields are observations/metadata.
 
 | JSON field | Meaning / domain | Notes |
 |---|---|---|
@@ -53,7 +53,8 @@ The [configuration guide](configuration.md) describes the separate partial-confi
 | `charging` | Boolean | Device status |
 | `polling_rate` | Current rate in Hz | Decode table: `8000,4000,2000,1000,500,250,125`; this does not imply support for every rate |
 | `supported_polling_rates` | List of rates reported by the device | Use this list, not the full decode table, when proposing a rate |
-| `layers` | Nine keymap objects; export only | Shape described below |
+| `layers` | Nine keymap objects; export only | `export --advanced` adds a per-layer `orientation` value (degrees, `0..315` in 45-degree steps) |
+| `macro_count`, `macro_buffer_size`, `macro_buffer` | Macro slot count, full raw VIA buffer size, and lowercase hex buffer | Advanced export only; `macro_buffer` can be used in a config to replace the complete buffer |
 | `raw` | Request hex → full reply hex | Diagnostic evidence, not configuration to apply |
 
 Observed example, **not a prescribed configuration or guaranteed factory default**: orientation `90`, stage `2`, DPI stages `[450,800,1600,3200,4000]`, active DPI `1600`, polling rate `1000`, reported supported rates `[1000,500,125]`.
@@ -85,7 +86,7 @@ Example shape (one layer only, abbreviated; **not an importable config**):
 }
 ```
 
-Exports are not atomic, not complete backups, and currently cannot be restored. They exclude the advanced features below.
+Exports are not atomic or complete backups and cannot be applied wholesale. Standard exports omit advanced fields; `export --advanced` includes per-layer orientation and the raw VIA macro buffer, but still omits tap-holds, combos, gestures, and profiles.
 
 ## Other JSON outputs
 
@@ -116,18 +117,17 @@ Slots use indices `0..2`; `connected` means status byte equals `1`. Empty slots 
 
 ## Known features not exposed by this CLI
 
-These are protocol/source findings, **not guarantees that this firmware supports them**. Beyond pointer and keymap setters already described, the following features remain unimplemented. Command IDs are in the [protocol reference](protocol-reference.md).
+These are protocol/source findings, **not guarantees that this firmware supports them**. Beyond pointer/keymap, per-layer orientation, and macro-buffer operations described above, the following features remain unimplemented. Command IDs are in the [protocol reference](protocol-reference.md).
 
 | Feature | Meaning |
 |---|---|
-| Active-layer switching | Selecting a layer on the device |
-| Per-layer orientation | Different trackball angle per layer |
+| Active-layer switching | Selecting a layer on the device; command payload/index conventions not verified |
 | Mouse profiles | Profile selection; distinct from DPI stages and keymap layers; count/layout unverified |
-| Tap-holds | Separate actions for tapping versus holding a button |
-| Combos | Actions for simultaneous button combinations |
-| Gestures | Trackball movement mapped to actions |
+| Tap-holds | Separate actions for tapping versus holding a button; payload schema unavailable |
+| Combos | Actions for simultaneous button combinations; payload schema unavailable |
+| Gestures | Trackball movement mapped to actions; payload schema unavailable |
 | Force gesture scroll | Gesture-based scroll mode |
 | Battery-report configuration | Reporting behavior; not battery percentage itself |
-| Macros | Stored action sequences; not included in keymap export even if a binding references one |
+| Parsed macros | Human-readable macro action editing; raw VIA macro-buffer read/replacement is supported experimentally, but its encoding is not parsed |
 
 Sleep, debounce, lift-off distance, motion sync, lighting, haptics, and other generic Keychron mouse settings have **not** been established as Nape Pro features here. Do not advertise them based on a different mouse's protocol. Firmware flashing, factory reset, and bootloader commands are also outside this CLI's scope.

@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-READ_COMMANDS = {0x01, 0x11, 0x12, 0x14, 0xA0, 0xA1, 0xA3, 0xB1, 0xB2, 0xB3}
-MISC_READ_COMMANDS = {0x0D, 0x20, 0x21, 0x24, 0x31}
+READ_COMMANDS = {0x01, 0x0C, 0x0D, 0x0E, 0x11, 0x12, 0x14, 0xA0, 0xA1, 0xA3, 0xB1, 0xB2, 0xB3}
+MISC_READ_COMMANDS = {0x0D, 0x20, 0x21, 0x24, 0x31, 0x38}
 
 
 def request(device: Any, payload: bytes, timeout_ms: int = 1500) -> bytes:
@@ -25,7 +25,11 @@ def request(device: Any, payload: bytes, timeout_ms: int = 1500) -> bytes:
         if len(payload) < 2 or payload[1] not in MISC_READ_COMMANDS:
             raise ValueError("misc command is not in the read-only allowlist")
         prefix = payload[:2]
+        if payload[1] == 0x38 and (len(payload) != 3 or not 0 <= payload[2] < 9):
+            raise ValueError("per-layer orientation read requires a layer index in 0..8")
     elif command in READ_COMMANDS:
+        if command in (0x0C, 0x0D) and len(payload) != 1:
+            raise ValueError("macro count/size query takes no arguments")
         prefix = payload[:1]
     else:
         raise ValueError("command is not in the read-only allowlist")
@@ -33,6 +37,14 @@ def request(device: Any, payload: bytes, timeout_ms: int = 1500) -> bytes:
         if len(payload) != 4:
             raise ValueError("keymap/encoder read requires four request bytes")
         prefix = payload
+    elif command == 0x0E:
+        if (
+            len(payload) != 4
+            or not 1 <= payload[3] <= 28
+            or int.from_bytes(payload[1:3], "big") + payload[3] > 65536
+        ):
+            raise ValueError("macro-buffer read requires a valid offset and size in 1..28")
+        prefix = payload[:3]
 
     packet = b"\x00" + payload.ljust(32, b"\x00")
     if device.write(packet) != len(packet):

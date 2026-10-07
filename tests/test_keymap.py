@@ -191,8 +191,16 @@ def test_cli_plan_requests_keymap_for_layer_config(mapped, monkeypatch, tmp_path
     path.write_text('{"schema_version":1,"layers":[{"layer":0,"buttons":{"M1":"0x0068"}}]}')
     monkeypatch.setattr(cli, "_select_receiver", lambda _: RECEIVER)
 
-    def read(info, *, include_keymap, timeout_ms):
+    def read(
+        info,
+        *,
+        include_keymap,
+        include_layer_orientations=False,
+        include_macro_buffer=False,
+        timeout_ms,
+    ):
         assert include_keymap
+        assert not include_layer_orientations and not include_macro_buffer
         return read_snapshot_from_device(mapped, include_keymap=True)
 
     monkeypatch.setattr(cli, "read_snapshot", read)

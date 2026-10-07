@@ -22,6 +22,9 @@ class FakeNape:
         self.response = b""
         self.layer_count = 9
         self.awake = True
+        self.layer_orientations = [0] * 9
+        self.macro_count = 2
+        self.macro_buffer = bytes(range(56))
 
     def open_path(self, path: bytes) -> None:
         assert path == b"test"
@@ -53,6 +56,17 @@ class FakeNape:
                 reply[2:4] = b"\x62\x00"
             elif sub == 0x0D:
                 reply[5:7] = b"\x58\x03"
+            elif sub == 0x38:
+                reply[2] = self.layer_orientations[payload[2]] // 45
+        elif command == 0x0C:
+            reply[1] = self.macro_count
+        elif command == 0x0D:
+            reply[1:3] = len(self.macro_buffer).to_bytes(2, "big")
+        elif command == 0x0E:
+            offset = int.from_bytes(payload[1:3], "big")
+            size = payload[3]
+            reply[3] = size
+            reply[4 : 4 + size] = self.macro_buffer[offset : offset + size]
         elif command == 0x12:
             reply[4:18] = bytes.fromhex("52 2a 00 00 00 d4 00 00 00 d1 00 d2 52 2b")
         elif command == 0x14:
@@ -96,6 +110,21 @@ def test_snapshot_reads_all_keymap_layers(device) -> None:
     assert device.closed
 
 
+def test_advanced_snapshot_reads_layer_orientations_and_macro_buffer(device) -> None:
+    result = snapshot.read_snapshot(
+        RECEIVER,
+        include_keymap=True,
+        include_layer_orientations=True,
+        include_macro_buffer=True,
+    )
+    assert [layer["orientation"] for layer in result["layers"]] == [0] * 9
+    assert result["macro_count"] == 2
+    assert result["macro_buffer_size"] == 56
+    assert result["macro_buffer"] == bytes(range(56)).hex()
+    assert len([payload for payload in device.requests if payload[0] == 0x0E]) == 2
+    assert device.closed
+
+
 def test_sleeping_device_stops_queries_and_closes(device) -> None:
     device.awake = False
     with pytest.raises(RuntimeError, match="awake"):
@@ -111,9 +140,18 @@ def test_unexpected_layer_count_is_rejected(device) -> None:
     assert device.closed
 
 
-@pytest.mark.parametrize("payload", [b"\x05", b"\xa7\x34", b"\x10"])
+@pytest.mark.parametrize("payload", [b"\x05", b"\xa7\x34", b"\x10", b"\x0f"])
 def test_channel_rejects_write_commands(payload: bytes) -> None:
     with pytest.raises(ValueError, match="read-only allowlist"):
+        request(object(), payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"\xa7\x38", b"\xa7\x38\x09", b"\x0c\x01", b"\x0e\x00\x00\x00", b"\x0e\x00\x00\x1d"],
+)
+def test_advanced_read_requests_validate_arguments(payload: bytes) -> None:
+    with pytest.raises(ValueError):
         request(object(), payload)
 
 
@@ -134,3 +172,15 @@ def test_export_writes_json_snapshot(device, monkeypatch, tmp_path) -> None:
     data = json.loads(path.read_text())
     assert data["schema_version"] == 1
     assert len(data["layers"]) == 9
+    assert "macro_buffer" not in data
+
+
+def test_advanced_export_includes_experimental_state(device, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cli, "_select_receiver", lambda index: RECEIVER)
+    path = tmp_path / "advanced.json"
+    args = cli._parser().parse_args(["export", str(path), "--advanced"])
+    assert cli._run(args) == 0
+    data = json.loads(path.read_text())
+    assert data["layers"][0]["orientation"] == 0
+    assert data["macro_buffer"] == bytes(range(56)).hex()
+    assert data["macro_count"] == 2

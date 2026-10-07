@@ -78,6 +78,11 @@ def _parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "output", type=Path, help="new JSON snapshot file (never overwritten)"
     )
+    export_parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help="also read per-layer orientation and the VIA macro buffer (experimental)",
+    )
     validate_parser = commands.add_parser(
         "validate", help="validate a partial pointer/keymap JSON config offline"
     )
@@ -210,6 +215,10 @@ def _run(args: argparse.Namespace) -> int:
         current = read_snapshot(
             _select_receiver(args.index),
             include_keymap=bool(config.layers),
+            include_layer_orientations=any(
+                layer.orientation is not None for layer in config.layers
+            ),
+            include_macro_buffer=config.macro_buffer is not None,
             timeout_ms=args.timeout_ms,
         )
         changes = plan_changes(config, current)
@@ -248,12 +257,18 @@ def _run(args: argparse.Namespace) -> int:
         result = read_snapshot(
             _select_receiver(args.index),
             include_keymap=args.command == "export",
+            include_layer_orientations=args.command == "export" and args.advanced,
+            include_macro_buffer=args.command == "export" and args.advanced,
             timeout_ms=args.timeout_ms,
         )
         if args.command == "export":
             with args.output.open("x", encoding="utf-8") as output:
                 output.write(json.dumps(result, indent=2) + "\n")
-            print(f"Saved pointer settings and {result['layer_count']} layers to {args.output}")
+            scope = "pointer settings and "
+            scope += f"{result['layer_count']} layers"
+            if args.advanced:
+                scope += ", per-layer orientation, and macro buffer"
+            print(f"Saved {scope} to {args.output}")
         elif args.json:
             print(json.dumps(result, indent=2))
         else:

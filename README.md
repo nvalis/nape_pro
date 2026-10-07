@@ -14,11 +14,11 @@ A small command-line companion for exploring the Keychron Nape Pro instead of re
 
 Implemented: HID discovery and read-only Link-KM receiver queries, tested against hardware `3434:D026`. The receiver's **FF60:61 Raw HID collection** accepts unnumbered 32-byte payloads for protocol (`0xB1`), paired-device state (`0xB2`), and firmware (`0xB3`) queries. Unsolicited `0xBC` notifications are skipped when waiting for replies.
 
-Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. Read requests go through a read-command allowlist; experimental pointer setters use a separate, restricted write path.
+Nape read support is also verified through this receiver on firmware **v1.1.6-ZK**: orientation, five DPI stages, battery, polling rate, nine keymap layers, and both encoder directions. `status` reads settings; `export` saves those settings and keycodes to JSON. `export --advanced` additionally reads per-layer orientation and the VIA macro buffer. Those advanced reads and writes are not hardware-verified. Read requests go through a read-command allowlist; experimental setters use a separate, restricted write path.
 
-`validate` checks a partial pointer/keymap JSON config offline; `plan` compares it with the device without writing. See [Configuration](docs/configuration.md).
+`validate` checks a partial pointer/keymap/orientation/macro-buffer JSON config offline; `plan` compares it with the device without writing. See [Configuration](docs/configuration.md).
 
-`apply` defaults to dry-run. Guarded pointer/keymap writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; DPI-value, orientation, polling-rate, button, and dial writes remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies all pointer fields and the complete expected keymap, including omitted entries; failures may leave partial changes and are not automatically rolled back.
+`apply` defaults to dry-run. Guarded writes require **`--write --backup NEW_FILE`** and are restricted to firmware `v1.1.6-ZK`, with only Nape `3434:4004` awake in receiver slot 0. Active DPI-stage selection and restoration are **hardware-tested**; other setters, including per-layer orientation and macro-buffer writes, remain simulated-device tested only. See the [verification log](docs/hardware-tests.md). Read-back verifies all pointer fields and the complete expected keymap, including omitted entries, plus any requested per-layer orientation or macro buffer; failures may leave partial changes and are not automatically rolled back.
 
 Direct USB transport is still unverified. `probe` rejects the Link-KM receiver and sends only read commands. `protocol set-orientation` only prints a packet.
 
@@ -44,7 +44,7 @@ Linux uses the `hidraw` backend when available, avoiding the libusb backend's mi
 
 In WSL, attach the receiver/device with `usbipd attach --wsl --busid <busid>` from Windows. Sharing alone is not attachment. While attached, the receiver is unavailable to Windows. Detach with `usbipd detach --busid <busid>`; **if force-bound**, Windows access also requires `usbipd unbind --busid <busid>` in Administrator PowerShell. Detaching alone does not undo force-binding.
 
-Receiver and wireless Nape reads are supported, with guarded pointer/keymap writes. Direct USB Nape access, Bluetooth, and advanced behavior configuration remain unimplemented.
+Receiver and wireless Nape reads are supported, with guarded pointer/keymap writes. Per-layer orientation and raw macro-buffer configuration are experimental. Direct USB Nape access, Bluetooth, tap-holds, combos, gestures, profiles, and active-layer switching remain unimplemented.
 
 ## Usage
 
@@ -70,11 +70,12 @@ Read Nape status or export its pointer settings and all nine keymap layers:
 uv run nape status
 uv run nape status --json
 uv run nape export nape-snapshot.json
+uv run nape export nape-advanced.json --advanced
 ```
 
 These commands require an awake Nape in 2.4 GHz mode. Export never overwrites an existing file. Layer and DPI-stage indices are zero-based. Button names are `03`, `04`, `01`, `02`, `M1`, `M2`, and `Press`; the dial has `ccw`/`cw` keycodes. Keycodes are hex values, not host keyboard shortcuts.
 
-**An export is not a complete firmware backup**: it does not include macros, tap-holds, combos, gestures, or per-layer orientation. It cannot be applied/restored yet. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
+A standard export is not a complete firmware backup. `export --advanced` includes per-layer orientation and the raw VIA macro buffer, but still omits tap-holds, combos, gestures, and mouse profiles. Snapshots cannot be applied wholesale. JSON includes raw replies for auditing. Keep the device stationary while reading; the firmware does not offer an atomic snapshot.
 
 Validate and preview a partial configuration:
 

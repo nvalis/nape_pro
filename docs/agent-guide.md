@@ -1,6 +1,6 @@
 # Agent guide: working with a Nape Pro
 
-**Current CLI: 0.3.0.** Reads and active DPI-stage selection/restoration are hardware-tested; other pointer and keymap setters remain simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Full restore, advanced behavior configuration, symbolic keycodes, and YAML loading are not implemented. Editing an export does not change the device.
+**Current CLI: 0.3.0.** Core reads and active DPI-stage selection/restoration are hardware-tested; other pointer/keymap setters, per-layer orientation, and raw macro-buffer writes remain simulated-device tested only. `apply` defaults to dry-run; actual writes require explicit `--write` and a new `--backup` path. Full restore, tap-holds, combos, gestures, profiles, active-layer switching, symbolic keycodes, and YAML loading are not implemented. Editing an export does not change the device.
 
 See the [configuration guide](configuration.md) for the JSON schema, write guards, and failure recovery; the [CLI/settings reference](cli-reference.md) for every command/field; and the [protocol reference](protocol-reference.md) for implementation status.
 
@@ -26,12 +26,12 @@ uv run nape export nape-before.json
 ## Handling a request to configure
 
 1. Read status and export the current state before proposing changes.
-2. Confirm the desired settings. Write a partial JSON config for pointer settings and/or layer button/dial bindings. Use zero-based layer/stage indices and four-digit hex keycodes; omitted entries are preserved. Do not invent firmware action codes or promise physical behavior from a successful storage read-back.
+2. Confirm the desired settings. Write a partial JSON config for pointer settings, layer button/dial bindings, per-layer orientation, or (experimentally) the full raw macro buffer. Use zero-based layer/stage indices and four-digit hex keycodes; omitted entries are preserved. Do not invent firmware action codes or promise physical behavior from a successful storage read-back.
 3. Run `nape validate CONFIG`, then `nape plan CONFIG --json` or `nape apply CONFIG --dry-run`. Show the actual diff and disclose which setters lack hardware tests and that reboot persistence remains unverified.
 4. Obtain explicit user approval for the exact changes before `nape apply CONFIG --write --backup NEW_FILE`. Do not treat a generic request to inspect/build/test the CLI as permission to alter settings. Write guards require the observed firmware/slot combination; do not bypass them with raw packets.
-5. Apply verifies all pointer fields and the complete expected keymap, including preserved entries. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
+5. Apply verifies all pointer fields and the complete expected keymap, including preserved entries, plus any requested per-layer orientation or macro buffer. Re-run status/export as needed. On failure, stop: state may be partially changed and there is no automatic rollback. Follow the configuration guide rather than retrying blindly.
 
-An export covers pointer settings, seven button entries per layer, and two dial directions across nine layers. It is **not a complete backup**: macros, tap-holds, combos, gestures, and per-layer orientation are omitted. There is no restore command.
+A standard export covers pointer settings, seven button entries per layer, and two dial directions across nine layers. `export --advanced` additionally reads per-layer orientation and the raw VIA macro buffer. Exports remain **incomplete backups**: tap-holds, combos, gestures, and profiles are omitted, and there is no restore command.
 
 ## Connection problems
 

@@ -1,6 +1,6 @@
 # Hardware verification log
 
-Tested receiver: Link-KM `3434:D026`, firmware `0.1.3`. Nape: receiver slot 0, paired ID `3434:4004`, firmware `v1.1.6-ZK Mar 9 2026 16:31:16`. Tests ran over the receiver's `FF60:61` Raw HID channel in WSL.
+Tested receiver: Link-KM `3434:D026`, firmware `0.1.3`. Nape: receiver slot 0, paired ID `3434:4004`, firmware `v1.1.6-ZK Mar 9 2026 16:31:16`. Tests ran over the receiver's `FF60:61` Raw HID channel in WSL. The per-layer orientation (`A7 38/39`) and VIA macro-buffer (`0C..0F`) support was added later and has only simulated-device tests; do not infer hardware support from this log.
 
 ## Active DPI stage: write and restore — passed
 
@@ -27,4 +27,4 @@ The config, pre-write snapshots, and final export remain in local `snapshots/` (
 
 **What this establishes:** `A7 22 stage` changes the active DPI stage on this target; immediate read-back and restoration work. Each apply saved a new supported-state snapshot before its setter.
 
-**What it does not establish:** persistence after reboot; other setter support; macro/gesture/advanced-state preservation (those features are not exported). Simulated-device tests cannot substitute for separate hardware tests of other setters. Do not infer that all writes are hardware-verified from this result.
+**What it does not establish:** persistence after reboot; support for other setters; or preservation of macros, per-layer orientations, gestures, and other state during unrelated writes. Advanced export now reads raw macros/per-layer orientation, but neither it nor those setters has been hardware-verified. Simulated-device tests cannot substitute for hardware tests. Do not infer that all writes are hardware-verified from this result.

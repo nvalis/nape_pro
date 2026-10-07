@@ -1,8 +1,9 @@
-"""Strict partial configuration and side-effect-free pointer/keymap planning."""
+"""Strict partial configuration and side-effect-free settings/keymap planning."""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ class LayerConfig:
     layer: int
     buttons: tuple[tuple[str, int], ...] = ()
     dial: tuple[tuple[str, int], ...] = ()
+    orientation: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"layer": self.layer}
@@ -28,6 +30,8 @@ class LayerConfig:
             bindings = getattr(self, field)
             if bindings:
                 result[field] = {name: f"0x{code:04X}" for name, code in bindings}
+        if self.orientation is not None:
+            result["orientation"] = self.orientation
         return result
 
 
@@ -38,6 +42,7 @@ class NapeConfig:
     dpi_values: tuple[int, ...] | None = None
     polling_rate: int | None = None
     layers: tuple[LayerConfig, ...] = ()
+    macro_buffer: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"schema_version": 1}
@@ -47,31 +52,42 @@ class NapeConfig:
                 result[name] = list(value) if isinstance(value, tuple) else value
         if self.layers:
             result["layers"] = [layer.to_dict() for layer in self.layers]
+        if self.macro_buffer is not None:
+            result["macro_buffer"] = self.macro_buffer
         return result
 
 
 @dataclass(frozen=True)
 class Change:
     field: str
-    before: int
-    after: int
+    before: Any
+    after: Any
     index: int | None = None
     layer: int | None = None
     binding: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         keymap = self.field in ("buttons", "dial")
-        return {
-            "setting": self.setting,
-            "before": f"0x{self.before:04X}" if keymap else self.before,
-            "after": f"0x{self.after:04X}" if keymap else self.after,
-        }
+        if self.field == "macro_buffer":
+            before = _macro_summary(self.before)
+            after = _macro_summary(self.after)
+        else:
+            before = f"0x{self.before:04X}" if keymap else self.before
+            after = f"0x{self.after:04X}" if keymap else self.after
+        return {"setting": self.setting, "before": before, "after": after}
 
     @property
     def setting(self) -> str:
         if self.field in ("buttons", "dial"):
             return f"layers[{self.layer}].{self.field}.{self.binding}"
+        if self.field == "layer_orientation":
+            return f"layers[{self.layer}].orientation"
         return f"{self.field}[{self.index}]" if self.index is not None else self.field
+
+
+def _macro_summary(value: str) -> dict[str, Any]:
+    raw = bytes.fromhex(value)
+    return {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def _integer(value: object, name: str, low: int, high: int) -> int:
@@ -102,29 +118,33 @@ def _layers(value: object) -> tuple[LayerConfig, ...]:
     result = []
     seen = set()
     for entry in value:
-        if not isinstance(entry, dict) or set(entry) - {"layer", "buttons", "dial"}:
-            raise ValueError("each layer accepts only layer, buttons, and dial fields")
+        if not isinstance(entry, dict) or set(entry) - {"layer", "buttons", "dial", "orientation"}:
+            raise ValueError("each layer accepts only layer, buttons, dial, and orientation fields")
         layer = _integer(entry.get("layer"), "layer", 0, 8)
         if layer in seen:
             raise ValueError(f"duplicate layer index: {layer}")
         seen.add(layer)
-        if "buttons" not in entry and "dial" not in entry:
-            raise ValueError(f"layer {layer} must specify buttons or dial bindings")
+        if not {"buttons", "dial", "orientation"}.intersection(entry):
+            raise ValueError(f"layer {layer} must specify bindings or an orientation")
         buttons = _bindings(entry["buttons"], "buttons", BUTTON_ORDER) if "buttons" in entry else ()
         dial = _bindings(entry["dial"], "dial", DIAL_ORDER) if "dial" in entry else ()
-        result.append(LayerConfig(layer, buttons, dial))
+        orientation = None
+        if "orientation" in entry:
+            orientation = _integer(entry["orientation"], f"layers[{layer}].orientation", 0, 315)
+            orientation_units(orientation)
+        result.append(LayerConfig(layer, buttons, dial, orientation))
     return tuple(sorted(result, key=lambda entry: entry.layer))
 
 
 def validate_config(data: object) -> NapeConfig:
     if not isinstance(data, dict):
         raise ValueError("configuration must be a JSON object")
-    unknown = set(data) - {"schema_version", "layers", *POINTER_FIELDS}
+    unknown = set(data) - {"schema_version", "layers", "macro_buffer", *POINTER_FIELDS}
     if unknown:
         raise ValueError(f"unknown configuration fields: {', '.join(sorted(map(str, unknown)))}")
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise ValueError("schema_version must be integer 1")
-    if not any(name in data for name in (*POINTER_FIELDS, "layers")):
+    if not any(name in data for name in (*POINTER_FIELDS, "layers", "macro_buffer")):
         raise ValueError("configuration must specify at least one setting or binding")
 
     orientation = None
@@ -146,7 +166,17 @@ def validate_config(data: object) -> NapeConfig:
         if polling_rate not in POLLING_RATES:
             raise ValueError(f"polling_rate must be one of {POLLING_RATES}")
     layers = _layers(data["layers"]) if "layers" in data else ()
-    return NapeConfig(orientation, dpi_index, dpi_values, polling_rate, layers)
+    macro_buffer = None
+    if "macro_buffer" in data:
+        value = data["macro_buffer"]
+        if (
+            not isinstance(value, str)
+            or len(value) % 2
+            or re.fullmatch(r"(?:[0-9a-fA-F]{2})+", value) is None
+        ):
+            raise ValueError("macro_buffer must be a non-empty string of whole-byte hex data")
+        macro_buffer = value.lower()
+    return NapeConfig(orientation, dpi_index, dpi_values, polling_rate, layers, macro_buffer)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -184,6 +214,18 @@ def desired_settings(config: NapeConfig, current: dict[str, Any]) -> dict[str, A
             for field in ("buttons", "dial"):
                 for name, code in getattr(layer, field):
                     target[field][name] = f"0x{code:04X}"
+            if layer.orientation is not None:
+                if "orientation" not in target:
+                    raise ValueError("per-layer orientation data is required to plan this change")
+                target["orientation"] = layer.orientation
+    if config.macro_buffer is not None:
+        if "macro_buffer" not in current:
+            raise ValueError("a macro-buffer snapshot is required to plan macro changes")
+        if len(config.macro_buffer) != len(current["macro_buffer"]):
+            raise ValueError(
+                "macro_buffer must contain exactly the device's full macro-buffer size"
+            )
+        result["macro_buffer"] = config.macro_buffer
     return result
 
 
@@ -206,4 +248,11 @@ def plan_changes(config: NapeConfig, current: dict[str, Any]) -> list[Change]:
                 after = int(desired["layers"][layer.layer][field][name], 16)
                 if before != after:
                     changes.append(Change(field, before, after, layer=layer.layer, binding=name))
+        if layer.orientation is not None:
+            before = current["layers"][layer.layer]["orientation"]
+            after = desired["layers"][layer.layer]["orientation"]
+            if before != after:
+                changes.append(Change("layer_orientation", before, after, layer=layer.layer))
+    if config.macro_buffer is not None and current["macro_buffer"] != desired["macro_buffer"]:
+        changes.append(Change("macro_buffer", current["macro_buffer"], desired["macro_buffer"]))
     return changes

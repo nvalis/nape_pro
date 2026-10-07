@@ -1,7 +1,7 @@
-"""Explicit, guarded pointer/keymap writes with prior snapshot and read-back.
+"""Explicit, guarded setting/keymap writes with prior snapshot and read-back.
 
-Setter layouts are from NapeBar; active DPI-stage selection/restoration has
-passed a hardware test. Other setters remain unverified on-device.
+Most setter layouts are source-based; active DPI-stage selection/restoration
+has passed a hardware test. Advanced and other setters remain unverified.
 The existing read-only channel allowlist remains unchanged.
 """
 
@@ -33,6 +33,18 @@ def encode_change(change: Change) -> bytes:
     """Encode a validated setter, never a caller-supplied raw packet."""
     if type(change.after) is not int:
         raise ValueError("setter value must be an integer")
+    if change.field == "layer_orientation":
+        if (
+            type(change.layer) is not int
+            or not 0 <= change.layer < 9
+            or type(change.after) is not int
+        ):
+            raise ValueError("invalid layer orientation target")
+        return build_request(
+            NapeCommand.SET_LAYER_ORIENTATION,
+            change.layer,
+            orientation_units(change.after),
+        )
     if change.field in ("buttons", "dial"):
         if type(change.layer) is not int or not 0 <= change.layer < 9:
             raise ValueError("keymap layer must be in 0..8")
@@ -77,6 +89,25 @@ def encode_change(change: Change) -> bytes:
             raise ValueError("unknown polling rate")
         return bytes((0xA7, 0x0E, POLLING_RATES.index(change.after))).ljust(32, b"\x00")
     raise ValueError(f"unsupported setter: {change.field}")
+
+
+def _encode_macro_buffer(value: str) -> list[bytes]:
+    data = bytes.fromhex(value)
+    if len(data) > 65535:
+        raise ValueError("macro buffer exceeds the 16-bit VIA offset range")
+    packets = []
+    for offset in range(0, len(data), 28):
+        chunk = data[offset : offset + 28]
+        packets.append(
+            bytes((0x0F, offset >> 8, offset & 0xFF, len(chunk), *chunk)).ljust(32, b"\x00")
+        )
+    return packets
+
+
+def _encode_change_packets(change: Change) -> list[bytes]:
+    if change.field == "macro_buffer":
+        return _encode_macro_buffer(change.after)
+    return [encode_change(change)]
 
 
 def _wait_keymap_ack(device: Any, command: int, timeout_ms: int) -> None:
@@ -148,8 +179,13 @@ def apply_config(
     device = hid_backend().device()
     try:
         device.open_path(device_info["path"])
+        layer_orientations = any(layer.orientation is not None for layer in config.layers)
         before = read_snapshot_from_device(
-            device, include_keymap=write or bool(config.layers), timeout_ms=timeout_ms
+            device,
+            include_keymap=write or bool(config.layers),
+            include_layer_orientations=layer_orientations,
+            include_macro_buffer=config.macro_buffer is not None,
+            timeout_ms=timeout_ms,
         )
         if write:
             _validate_write_target(before)
@@ -166,7 +202,9 @@ def apply_config(
             return {**result, "mode": "no-op", "backup": None}
         assert backup is not None
         expected = desired_settings(config, before)
-        packets = [b"\x00" + encode_change(change) for change in changes]
+        packets = [
+            b"\x00" + packet for change in changes for packet in _encode_change_packets(change)
+        ]
         # Save and flush the complete supported snapshot before attempting a setter.
         _save_backup(backup, before)
         attempts = 0
@@ -178,14 +216,25 @@ def apply_config(
                 if packet[1] in (0x05, 0x15):
                     _wait_keymap_ack(device, packet[1], timeout_ms)
                 time.sleep(0.05)
-            # Pointer setters are fire-and-forget; keymap setters wait for ACKs.
-            # Neither successful USB writes nor ACKs prove acceptance/persistence.
+            # Pointer/orientation/macro setters are fire-and-forget; keymap setters wait
+            # for ACKs. Neither writes nor ACKs prove acceptance or persistence.
             time.sleep(0.2)
-            after = read_snapshot_from_device(device, include_keymap=True, timeout_ms=timeout_ms)
+            after = read_snapshot_from_device(
+                device,
+                include_keymap=True,
+                include_layer_orientations=layer_orientations,
+                include_macro_buffer=config.macro_buffer is not None,
+                timeout_ms=timeout_ms,
+            )
             _validate_write_target(after)
             mismatches = [field for field in POINTER_FIELDS if after[field] != expected[field]]
             if after["layers"] != expected["layers"]:
                 mismatches.append("layers")
+            if (
+                config.macro_buffer is not None
+                and after["macro_buffer"] != expected["macro_buffer"]
+            ):
+                mismatches.append("macro_buffer")
             if mismatches:
                 raise ValueError(f"read-back mismatch: {', '.join(mismatches)}")
         except (OSError, RuntimeError, ValueError, KeyboardInterrupt) as exc:

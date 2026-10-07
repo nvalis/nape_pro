@@ -33,6 +33,13 @@ CURRENT = {
         {"schema_version": 1, "dpi_values": [100, 100, 100, 100, 65536]},
         {"schema_version": 1, "dpi_values": [100, 100, 100, 100, 100.0]},
         {"schema_version": 1, "polling_rate": 300},
+        {"schema_version": 1, "macro_buffer": None},
+        {"schema_version": 1, "macro_buffer": "a"},
+        {"schema_version": 1, "macro_buffer": "gg"},
+        {"schema_version": 1, "layers": [{"layer": 0, "orientation": 91}]},
+        {"schema_version": 1, "layers": [{"layer": 0, "orientation": True}]},
+        {"schema_version": 1, "layers": [{"layer": 0}]},
+        {"schema_version": 1, "layers": [{"layer": 0, "unknown": 1}]},
     ],
 )
 def test_invalid_configs_are_rejected(data: object) -> None:
@@ -59,6 +66,45 @@ def test_dpi_diff_contains_only_changed_stages() -> None:
 
 def test_noop_config_has_empty_diff() -> None:
     assert plan_changes(validate_config({"schema_version": 1, "orientation": 90}), CURRENT) == []
+
+
+def test_macro_buffer_is_normalized_and_compared_as_binary() -> None:
+    config = validate_config({"schema_version": 1, "macro_buffer": "A0b1"})
+    assert config.to_dict()["macro_buffer"] == "a0b1"
+    changes = plan_changes(
+        config,
+        {**CURRENT, "macro_buffer": "0000"},
+    )
+    assert changes[0].field == "macro_buffer"
+    assert changes[0].to_dict()["after"] == {
+        "bytes": 2,
+        "sha256": "42dec0ac7505b626485e54ce1d1ee39459beb0c3368cf2b67f9bcd52246b81f6",
+    }
+
+
+def test_macro_buffer_must_match_device_capacity() -> None:
+    config = validate_config({"schema_version": 1, "macro_buffer": "00"})
+    with pytest.raises(ValueError, match="full macro-buffer size"):
+        plan_changes(config, {**CURRENT, "macro_buffer": "0000"})
+
+
+def test_layer_orientation_is_part_of_layer_diff() -> None:
+    current = {
+        **CURRENT,
+        "layers": [
+            {
+                "layer": i,
+                "buttons": {"M1": "0x0000"},
+                "dial": {"ccw": "0x0000", "cw": "0x0000"},
+                "orientation": 0,
+            }
+            for i in range(9)
+        ],
+    }
+    config = validate_config({"schema_version": 1, "layers": [{"layer": 2, "orientation": 90}]})
+    change = plan_changes(config, current)[0]
+    assert change.setting == "layers[2].orientation"
+    assert change.before == 0 and change.after == 90
 
 
 def test_plan_rejects_rate_not_supported_by_device() -> None:

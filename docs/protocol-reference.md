@@ -27,6 +27,7 @@ For implementation planning, not instructions to send arbitrary packets. The [CL
 | `A7 21` | Active DPI stage | Byte `2`, index `0..4` | `status`, `export` |
 | `A7 24 stage` | Stage's DPI value | Bytes `2..3`, LE16 | `status`, `export` |
 | `A7 31` | Battery | Byte `2` = percentage, byte `3` nonzero = charging | `status`, `export` |
+| `A7 38 layer` | Per-layer orientation | Byte `2` × `45` degrees | `export --advanced`, advanced config planning |
 | `B1` | Receiver protocol/features | Bytes `1..2`, LE16; bytes `3..4` retained as raw features | `receiver-info` |
 | `B2` | Receiver paired-slot state | Three records starting at `2`, `7`, `12`: VID BE16, PID BE16, status byte | Receiver diagnostics and awake check |
 | `B3` | Receiver firmware | NUL-terminated ASCII from byte `1` | `receiver-info` |
@@ -35,7 +36,7 @@ Keymap offset = `layer * 14`, layer `0..8`. Column order: `03`, `04`, `01`, `02`
 
 Polling-rate index/bitmap bit table: `0→8000`, `1→4000`, `2→2000`, `3→1000`, `4→500`, `5→250`, `6→125` Hz. This is a decoder table, **not** a claim that the Nape supports 8 kHz. Honor the device's supported-rate bitmap.
 
-`BC` is an unsolicited receiver state notification, not a host command. Nape `A3` reports may also arrive asynchronously. The shared read path admits only the command IDs in the table above; `A7` is restricted to subcommands `0D`, `20`, `21`, `24`, `31`. Guarded apply encodes separate pointer/keymap setters, requiring backup/target guards and read-back; it does not relax this read allowlist.
+`BC` is an unsolicited receiver state notification, not a host command. Nape `A3` reports may also arrive asynchronously. The shared read path admits only the command IDs in the table above, supported VIA macro queries, and `A7` subcommands `0D`, `20`, `21`, `24`, `31`, `38`. Guarded apply encodes only validated setters, requiring backup/target guards and read-back; it does not relax this read allowlist.
 
 ## Experimental pointer setter encodings
 
@@ -46,6 +47,7 @@ These are the pointer write payloads `apply` can construct, padded to 32 bytes w
 | `A7 23 stage dpi_lo dpi_hi` | Set one DPI stage value, LE16 |
 | `A7 22 stage` | Select DPI stage `0..4` |
 | `A7 34 angle_units` | Set global/default angle, degrees divided by 45 |
+| `A7 39 layer angle_units` | Set per-layer angle; layer `0..8`, angle in 45-degree units |
 | `A7 0E rate_index` | Set polling rate using the decode table above |
 
 Only changed values are sent, in the order above. Apply does not depend on setter ACKs: it waits briefly, then reads back all pointer fields and the keymap. Firmware may reject/quantize input; persistence across reboot is not established. Use the guarded CLI, never arbitrary raw packets.
@@ -88,14 +90,14 @@ All are under top-level **`A7`**. Names below omit the common `KC_USER_CMD_NAPE_
 | `32` | `Set_Force_Gesture_Scroll` | Write | Source-only |
 | `33` | `Get_Force_Gesture_Scroll` | Read | Source-only |
 | `34` | `SET_ORI` | Write | Experimental apply; `protocol set-orientation` still only previews |
-| `38` | `GET_LAYER_ORI` | Read | Source-only; enum exists, no CLI operation |
-| `39` | `SET_LAYER_ORI` | Write | Source-only; enum exists, no CLI operation |
+| `38` | `GET_LAYER_ORI` | Read | Advanced export/config planning; response angle units in byte `2` |
+| `39` | `SET_LAYER_ORI` | Write | Guarded experimental apply; not hardware-tested |
 
-Orientation uses units of 45 degrees. DPI stages are `0..4` on tested hardware. Per-layer orientation and profile indexing/layouts still need device verification. Do not infer a DPI write range or tap/hold timing limits from these command IDs.
+Orientation uses units of 45 degrees. DPI stages are `0..4` on tested hardware. Per-layer orientation's packet layout is documented by the reverse-engineered Launcher notes but still needs device verification. Profile indexing/layouts remain unknown. Do not infer a DPI write range or tap/hold timing limits from these command IDs.
 
 ## Other relevant commands
 
-These IDs are reported by the linked sources, **not hardware-tested write support**. None are admitted by the current read allowlist. Single-key, encoder, and polling-rate setters have experimental apply implementations; other entries remain source-only.
+These IDs are reported by the linked sources, **not hardware-tested write support**. Macro read commands `0C..0E` are admitted by the read allowlist; the remaining unsupported read/write commands are not. Single-key, encoder, polling-rate, per-layer orientation, and full macro-buffer setters have experimental apply implementations; other entries remain source-only.
 
 | Prefix (hex) | Name / purpose | Direction |
 |---|---|---|
@@ -103,16 +105,16 @@ These IDs are reported by the linked sources, **not hardware-tested write suppor
 | `05` | `DYNAMIC_KEYMAP_SET_KEYCODE`, one key (experimental apply) | Write |
 | `13` | `DYNAMIC_KEYMAP_SET_BUFFER`, keymap bytes | Write |
 | `15` | `DYNAMIC_KEYMAP_SET_ENCODER` (experimental apply) | Write |
-| `0C` | `DYNAMIC_KEYMAP_MACRO_GET_COUNT` | Read |
-| `0D` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE` | Read |
-| `0E` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER` | Read |
-| `0F` | `DYNAMIC_KEYMAP_MACRO_SET_BUFFER` | Write |
-| `10` | `DYNAMIC_KEYMAP_MACRO_RESET` | Write/reset |
+| `0C` | `DYNAMIC_KEYMAP_MACRO_GET_COUNT` | Read; advanced export |
+| `0D` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE` | Read; advanced export |
+| `0E` | `DYNAMIC_KEYMAP_MACRO_GET_BUFFER` | Read; advanced export |
+| `0F` | `DYNAMIC_KEYMAP_MACRO_SET_BUFFER` | Guarded experimental full-buffer replacement |
+| `10` | `DYNAMIC_KEYMAP_MACRO_RESET` | Write/reset; not implemented |
 | `A7 0E` | Polling-rate setter from NapeBar (experimental apply) | Write |
 
-A top-level `0D` is a macro query, whereas **`A7 0D`** is a polling query. Do not confuse the command namespaces. Buffer-based keymap writes and macro encodings/capacities remain unimplemented. Setter acceptance, persistence, acknowledgements, and restoration behavior still need hardware verification; apply currently checks immediate read-back only.
+A top-level `0D` is a macro query, whereas **`A7 0D`** is a polling query. Do not confuse the command namespaces. Macro commands use standard VIA offsets: buffer size is BE16 at bytes `1..2`; GET/SET requests carry BE16 offset at `1..2`, size at `3`, and data at `4..`; operations are chunked to 28 bytes. The CLI treats macro storage as opaque bytes and replaces the full buffer. Macro and per-layer orientation setters are simulated-device tested only, not hardware-verified.
 
-Factory reset, bootloader, firmware-update, RGB, Hall Effect, and generic high-rate mouse protocols are outside this reference's Nape configuration scope. Do not send them during configuration inspection.
+Factory reset, bootloader, firmware-update, and pairing operations remain out of scope. RGB, Hall Effect, and generic high-rate mouse protocols are also outside this reference's Nape configuration scope. Do not send them during configuration inspection.
 
 ## Sources and local implementation
 
